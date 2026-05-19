@@ -10,3 +10,14 @@ AsyncSessionLocal = sessionmaker(
 )
 
 Base = declarative_base()
+
+# Import all models to ensure they are registered with SQLAlchemy's metadata before mappers are configured
+import app.modules.users.models
+import app.modules.companies.models
+import app.modules.gas_stations.models
+import app.modules.wallets.models
+import app.modules.transactions.models
+import app.modules.fuels.models
+import app.modules.subsidies.models
+import app.modules.vehicles.models
+import app.modules.registries.models

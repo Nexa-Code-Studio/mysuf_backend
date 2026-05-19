@@ -11,6 +11,7 @@ class UserRole(str, enum.Enum):
     SUPERADMIN = "SUPERADMIN"
     ADMIN_GAS_STATION = "ADMIN_GAS_STATION"
     ADMIN_COMPANY = "ADMIN_COMPANY"
+    SALES_OFFICER = "SALES_OFFICER"
     BUYER = "BUYER"
 
 class VerificationStatus(str, enum.Enum):
