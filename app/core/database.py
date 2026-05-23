@@ -13,6 +13,7 @@ Base = declarative_base()
 
 # Import all models to ensure they are registered with SQLAlchemy's metadata before mappers are configured
 import app.modules.users.models
+import app.modules.buyer_registrations.models
 import app.modules.companies.models
 import app.modules.gas_stations.models
 import app.modules.wallets.models

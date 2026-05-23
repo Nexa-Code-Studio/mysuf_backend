@@ -32,6 +32,9 @@ dist/
 .coverage.*
 htmlcov/
 
+# Local uploaded files
+storage/
+
 # Editor and local tool files
 .python-version
 .idea/
