@@ -84,6 +84,19 @@ async def test_buyer_profile_flow():
             # B. Get before create: GET /me/buyer-profile -> 404
             res = await ac.get("/api/v1/users/me/buyer-profile", headers=buyer_headers)
             assert res.status_code == 404
+
+            # B2. Get aggregated profile before buyer profile is created
+            res = await ac.get("/api/v1/users/me/profile", headers=buyer_headers)
+            assert res.status_code == 200
+            profile_data = res.json()
+            assert profile_data["name"] == "Test Buyer"
+            assert profile_data["nikMasked"] == ""
+            assert profile_data["isVerified"] is False
+            assert profile_data["isEligible"] is False
+            assert profile_data["familyCardNumber"] == ""
+            assert profile_data["vehiclesCount"] == 0
+            assert profile_data["quotaRemaining"] == 0
+            assert profile_data["walletBalance"] == 0
             
             # C. Update before create: PUT /me/buyer-profile -> 404
             res = await ac.put("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={"nik_snapshot": "123"})
@@ -133,6 +146,19 @@ async def test_buyer_profile_flow():
             res = await ac.get("/api/v1/users/me/buyer-profile", headers=buyer_headers)
             assert res.status_code == 200
             assert res.json()["nik_snapshot"] == "3201010101010001"
+
+            # H2. Get aggregated profile after buyer profile is created
+            res = await ac.get("/api/v1/users/me/profile", headers=buyer_headers)
+            assert res.status_code == 200
+            profile_data = res.json()
+            assert profile_data["name"] == "Test Buyer"
+            assert profile_data["nikMasked"] == "3201****0001"
+            assert profile_data["isVerified"] is False
+            assert profile_data["isEligible"] is False
+            assert profile_data["familyCardNumber"].startswith("KK_")
+            assert profile_data["vehiclesCount"] == 0
+            assert profile_data["quotaRemaining"] == 150
+            assert profile_data["walletBalance"] == 0
             
             # I. Update profile with invalid KK: PUT /me/buyer-profile -> 400
             res = await ac.put("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={

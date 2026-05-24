@@ -56,3 +56,19 @@ def create_refresh_token(
     }
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def decode_qris_ktp(qr_string: str) -> str:
+    """
+    Decodes the secure symmetric XOR obfuscated QRIS string to retrieve the raw NIK.
+    """
+    prefix = "MYSUF-QRIS:KTP:"
+    if not qr_string.startswith(prefix):
+        raise ValueError("Invalid QRIS code format or prefix mismatch")
+        
+    import base64
+    base64_data = qr_string[len(prefix):]
+    encrypted_bytes = base64.b64decode(base64_data)
+    
+    key_bytes = settings.QRIS_SECRET_KEY.encode('utf-8')
+    decrypted_bytes = bytes([b ^ key_bytes[i % len(key_bytes)] for i, b in enumerate(encrypted_bytes)])
+    return decrypted_bytes.decode('utf-8')

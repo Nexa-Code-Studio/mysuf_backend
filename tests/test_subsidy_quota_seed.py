@@ -87,6 +87,14 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
     quota_ids: list = []
     try:
         async with AsyncSessionLocal() as session:
+            await session.execute(delete(SubsidyQuota))
+            await session.execute(delete(VehicleOwnership))
+            await session.execute(delete(BuyerProfile))
+            await session.execute(delete(Company))
+            await session.execute(delete(User))
+            await session.execute(delete(KK))
+            await session.commit()
+
             session.add_all([kk, buyer_user, buyer_profile, company])
             await session.commit()
             await session.refresh(buyer_profile)

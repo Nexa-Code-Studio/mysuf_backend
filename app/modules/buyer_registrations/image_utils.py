@@ -67,10 +67,10 @@ class ImageUtils:
     @staticmethod
     def crop_ktp_portrait(image: Any) -> Any:
         height, width = image.shape[:2]
-        left = int(width * 0.70)
-        right = int(width * 0.96)
-        top = int(height * 0.16)
-        bottom = int(height * 0.82)
+        left = int(round(width * 0.70))
+        right = int(round(width * 0.96))
+        top = int(round(height * 0.16))
+        bottom = int(round(height * 0.82))
         left = max(0, left)
         right = min(width, right)
         top = max(0, top)

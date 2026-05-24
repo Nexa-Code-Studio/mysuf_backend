@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import delete, func, select
 
 from app.core.database import AsyncSessionLocal
-from app.modules.subsidies.models import SubsidyPolicy
+from app.modules.subsidies.models import KKSubsidyEligibility, SubsidyPolicy, SubsidyQuota
 from app.modules.subsidies.seed_data import seed_subsidy_policies
 from app.modules.vehicles.models import VehicleUsageType
 
@@ -47,6 +47,18 @@ async def test_seed_subsidy_policies_is_idempotent_and_keeps_one_matching_policy
 
     try:
         async with AsyncSessionLocal() as session:
+            policy_ids = (
+                await session.execute(
+                    select(SubsidyPolicy.id).where(SubsidyPolicy.usage_type.in_(usage_types))
+                )
+            ).scalars().all()
+            if policy_ids:
+                await session.execute(
+                    delete(SubsidyQuota).where(SubsidyQuota.subsidy_policy_id.in_(policy_ids))
+                )
+                await session.execute(
+                    delete(KKSubsidyEligibility).where(KKSubsidyEligibility.subsidy_policy_id.in_(policy_ids))
+                )
             await session.execute(delete(SubsidyPolicy).where(SubsidyPolicy.usage_type.in_(usage_types)))
             await session.commit()
             first_summary = await seed_subsidy_policies(session, TEST_SUBSIDY_POLICY_SEED_DATA)
@@ -73,6 +85,18 @@ async def test_seed_subsidy_policies_is_idempotent_and_keeps_one_matching_policy
             assert active_count == 4
     finally:
         async with AsyncSessionLocal() as session:
+            policy_ids = (
+                await session.execute(
+                    select(SubsidyPolicy.id).where(SubsidyPolicy.usage_type.in_(usage_types))
+                )
+            ).scalars().all()
+            if policy_ids:
+                await session.execute(
+                    delete(SubsidyQuota).where(SubsidyQuota.subsidy_policy_id.in_(policy_ids))
+                )
+                await session.execute(
+                    delete(KKSubsidyEligibility).where(KKSubsidyEligibility.subsidy_policy_id.in_(policy_ids))
+                )
             await session.execute(
                 delete(SubsidyPolicy).where(
                     SubsidyPolicy.usage_type.in_(usage_types),

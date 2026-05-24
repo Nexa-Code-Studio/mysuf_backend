@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 
@@ -57,6 +57,7 @@ class BuyerProfile(Base):
     kk_id = Column(UUID(as_uuid=True), ForeignKey("kk.id"), nullable=False, index=True)
 
     verification_status = Column(Enum(VerificationStatus, name="verification_status_enum"), default=VerificationStatus.UNVERIFIED, nullable=False)
+    risk_score = Column(Numeric(5, 2), nullable=False, default=0)
 
     # Relationships
     user = relationship("User", back_populates="buyer_profile")

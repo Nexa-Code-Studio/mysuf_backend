@@ -6,7 +6,8 @@ from app.api.deps import get_db, get_current_user, get_optional_current_user, re
 from app.modules.users.models import User, UserRole
 from app.modules.users.schemas import (
     UserCreate, UserUpdate, UserResponse, UserListResponse,
-    BuyerProfileCreate, BuyerProfileUpdate, BuyerProfileResponse, BuyerProfileCheckResponse
+    BuyerProfileCreate, BuyerProfileUpdate, BuyerProfileResponse, BuyerProfileCheckResponse,
+    UserProfileResponse, BuyerHomeResponse, BuyerQuotaResponse,
 )
 from app.modules.users.service import UserService
 
@@ -86,6 +87,44 @@ async def read_buyer_profile(
     """
     service = UserService(db)
     return await service.get_buyer_profile(user_id=str(current_user.id))
+
+@router.get("/me/profile", response_model=UserProfileResponse)
+async def read_user_profile(
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Get the current user's aggregated Profile details. Only for BUYER role.
+    """
+    service = UserService(db)
+    return await service.get_user_profile_detail(user_id=str(current_user.id))
+
+
+@router.get("/me/home", response_model=BuyerHomeResponse)
+async def read_buyer_home(
+    latitude: float | None = Query(None),
+    longitude: float | None = Query(None),
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    service = UserService(db)
+    return await service.get_buyer_home(
+        user_id=str(current_user.id),
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.get("/me/quota", response_model=BuyerQuotaResponse)
+async def read_buyer_quota(
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Retrieve user quota details including subsidized fuels and vehicle totals.
+    """
+    service = UserService(db)
+    return await service.get_buyer_quota_detail(user_id=str(current_user.id))
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(

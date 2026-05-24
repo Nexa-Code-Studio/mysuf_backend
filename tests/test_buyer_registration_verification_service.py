@@ -72,6 +72,7 @@ async def test_verification_service_completes_attempt(monkeypatch):
             nik_input=citizen.nik,
             email=f"verify_success_{uuid4()}@example.com",
             password_hash="hashed-password",
+            ocr_raw_text=citizen.nama,
             status=BuyerRegistrationStatus.PENDING,
         )
         attempt_id = attempt.id
@@ -183,6 +184,7 @@ async def test_verification_service_fails_on_nik_mismatch(monkeypatch):
             nik_input=citizen.nik,
             email=f"verify_fail_{uuid4()}@example.com",
             password_hash="hashed-password",
+            ocr_raw_text=citizen.nama,
             status=BuyerRegistrationStatus.PENDING,
         )
         attempt_id = attempt.id

@@ -4,12 +4,13 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.database import AsyncSessionLocal
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
 from app.modules.registries.models import KK, VehicleRegistryMockup
+from app.modules.subsidies.models import EligibilityStatus, KKSubsidyEligibility
 from app.modules.users.models import BuyerProfile, User, UserRole, VerificationStatus
 from app.modules.vehicles.models import (
     VehicleOwnership,
@@ -106,11 +107,21 @@ async def test_buyer_personal_vehicle_submission_creates_vehicle_ownership():
         assert storage_dir.exists()
         assert (storage_dir / "stnk-photo.jpg").exists()
         assert (storage_dir / "vehicle-photo.jpg").exists()
+
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(KKSubsidyEligibility).where(KKSubsidyEligibility.kk_id == kk_id)
+            )
+            eligibility = result.scalars().first()
+            assert eligibility is not None
+            assert eligibility.eligibility_status == EligibilityStatus.ELIGIBLE
     finally:
         async with AsyncSessionLocal() as session:
             if ownership_id is not None:
                 await session.execute(delete(VehicleOwnershipDocument).where(VehicleOwnershipDocument.vehicle_ownership_id == ownership_id))
                 await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id))
+            if kk_id is not None:
+                await session.execute(delete(KKSubsidyEligibility).where(KKSubsidyEligibility.kk_id == kk_id))
             if registry_vehicle_id is not None:
                 await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == registry_vehicle_id))
             if buyer_profile_id is not None:
@@ -212,6 +223,8 @@ async def test_buyer_ojol_vehicle_submission_creates_pending_request():
                     )
                 )
                 await session.execute(delete(VehicleOwnershipRequest).where(VehicleOwnershipRequest.id == request_id))
+            if kk_id is not None:
+                await session.execute(delete(KKSubsidyEligibility).where(KKSubsidyEligibility.kk_id == kk_id))
             if registry_vehicle_id is not None:
                 await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == registry_vehicle_id))
             if buyer_profile_id is not None:

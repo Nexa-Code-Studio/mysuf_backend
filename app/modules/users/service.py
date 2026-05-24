@@ -1,17 +1,24 @@
+import math
+from datetime import datetime
+from decimal import Decimal
 from typing import List
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash
+from app.modules.subsidies.service import SubsidyService
+from app.modules.transactions.models import FuelTransaction, TransactionFlow, TransactionType, WalletTransaction
 from app.modules.users.schemas import UserCreate, UserUpdate, BuyerProfileCreate, BuyerProfileUpdate
 from app.modules.users.models import User, UserRole, BuyerProfile, VerificationStatus
 from app.modules.users.repository import UserRepository
+from app.modules.vehicles.models import VehicleUsageType
 from app.modules.auth.utils import has_role
 
 class UserService:
     def __init__(self, db: AsyncSession):
         self.repo = UserRepository(db)
+        self.subsidy_service = SubsidyService(db)
 
     async def get_users(self, page: int = 1, page_size: int = 20) -> dict:
         skip = (page - 1) * page_size
@@ -205,4 +212,366 @@ class UserService:
             "has_buyer_profile": False,
             "buyer_profile_id": None,
             "verification_status": None
+        }
+
+    async def get_buyer_home(self, user_id: str, latitude: float | None, longitude: float | None) -> dict:
+        buyer_profile = await self.repo.get_buyer_profile_by_user_id(user_id)
+        if not buyer_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Buyer profile not found.",
+            )
+
+        ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(buyer_profile.ktp_nfc_id_snapshot)
+        has_verified_vehicle = any(
+            ownership.usage_type != VehicleUsageType.COMPANY_OPERATIONAL
+            for ownership in ownerships
+        )
+
+        current_time = datetime.utcnow()
+        personal_quota = await self.subsidy_service.get_or_sync_personal_quota(
+            buyer_profile=buyer_profile,
+            month=current_time.month,
+            year=current_time.year,
+        )
+        quota_liters = float(Decimal(personal_quota.quota_liters))
+        used_liters = float(Decimal(personal_quota.used_liters))
+        remaining_liters = max(quota_liters - used_liters, 0.0)
+
+        recent_transactions = await self._build_recent_transactions(buyer_profile)
+
+        payload = {
+            "vehicle_verification": {
+                "has_verified_vehicle": has_verified_vehicle,
+                "show_verify_vehicle_cta": not has_verified_vehicle,
+                "cta_route": "/vehicles/add",
+            },
+            "personal_quota": {
+                "month": current_time.month,
+                "year": current_time.year,
+                "quota_liters": quota_liters,
+                "used_liters": used_liters,
+                "remaining_liters": remaining_liters,
+            },
+            "nearby_gas_stations": self._build_nearby_gas_stations(latitude, longitude),
+            "recent_transactions": recent_transactions,
+            "risk_status": {
+                "verification_status": buyer_profile.verification_status,
+                "risk_score": float(Decimal(buyer_profile.risk_score)),
+            },
+        }
+        return await self.populate_nearby_gas_stations(payload, latitude, longitude)
+
+    async def _build_recent_transactions(self, buyer_profile: BuyerProfile) -> list[dict]:
+        wallet = await self.repo.get_wallet_by_owner_user_id(str(buyer_profile.user_id))
+        wallet_transactions = await self.repo.get_recent_wallet_transactions(wallet.id, limit=10) if wallet else []
+        fuel_transactions = await self.repo.get_recent_fuel_transactions(buyer_profile.id, limit=10)
+
+        items: list[dict] = []
+        fuel_wallet_transaction_ids = {
+            str(fuel_transaction.wallet_transaction_id)
+            for fuel_transaction in fuel_transactions
+            if fuel_transaction.wallet_transaction_id is not None
+        }
+
+        for fuel_transaction in fuel_transactions:
+            items.append(self._serialize_fuel_transaction_for_home(fuel_transaction))
+
+        for wallet_transaction in wallet_transactions:
+            if str(wallet_transaction.id) in fuel_wallet_transaction_ids:
+                continue
+            serialized = self._serialize_wallet_transaction_for_home(wallet_transaction)
+            if serialized is not None:
+                items.append(serialized)
+
+        items.sort(key=lambda item: item["occurred_at"], reverse=True)
+        return items[:3]
+
+    def _serialize_fuel_transaction_for_home(self, fuel_transaction: FuelTransaction) -> dict:
+        fuel_type_name = fuel_transaction.fuel_type.name if fuel_transaction.fuel_type else "Bahan Bakar"
+        gas_station_name = fuel_transaction.gas_station.name if fuel_transaction.gas_station else "SPBU"
+        occurred_at = fuel_transaction.created_at
+        return {
+            "id": str(fuel_transaction.id),
+            "tile_type": "FUEL",
+            "title": f"{fuel_type_name} - {gas_station_name}",
+            "subtitle": self._format_home_datetime(occurred_at),
+            "amount": float(Decimal(fuel_transaction.total_amount)),
+            "transaction_flow": TransactionFlow.OUT.value,
+            "status": fuel_transaction.transaction_status.value,
+            "occurred_at": occurred_at,
+            "fuel": {
+                "fuel_type_name": fuel_type_name,
+                "gas_station_name": gas_station_name,
+                "liters": float(Decimal(fuel_transaction.liters)),
+            },
+        }
+
+    def _serialize_wallet_transaction_for_home(self, wallet_transaction: WalletTransaction) -> dict | None:
+        normalized_type = self._normalize_wallet_transaction_type(wallet_transaction)
+        if normalized_type == TransactionType.TOP_UP:
+            title = "Top Up Saldo"
+            tile_type = "TOP_UP"
+        elif normalized_type == TransactionType.TRANSFER:
+            title = "Transfer Saldo"
+            tile_type = "TRANSFER"
+        else:
+            return None
+
+        return {
+            "id": str(wallet_transaction.id),
+            "tile_type": tile_type,
+            "title": title,
+            "subtitle": self._format_home_datetime(wallet_transaction.created_at),
+            "amount": float(Decimal(wallet_transaction.amount)),
+            "transaction_flow": wallet_transaction.transaction_flow.value,
+            "status": wallet_transaction.status.value,
+            "occurred_at": wallet_transaction.created_at,
+            "fuel": None,
+        }
+
+    def _normalize_wallet_transaction_type(self, wallet_transaction: WalletTransaction) -> TransactionType:
+        if wallet_transaction.fuel_transactions:
+            return TransactionType.FUEL_PURCHASE
+        return wallet_transaction.type
+
+    def _build_nearby_gas_stations(self, latitude: float | None, longitude: float | None) -> dict:
+        if latitude is None or longitude is None:
+            return {
+                "location_available": False,
+                "message": "Lokasi Anda tidak ditemukan, tolong nyalakan GPS.",
+                "items": [],
+            }
+        return {
+            "location_available": True,
+            "message": None,
+            "items": [],
+        }
+
+    async def populate_nearby_gas_stations(self, home_payload: dict, latitude: float | None, longitude: float | None) -> dict:
+        if latitude is None or longitude is None:
+            return home_payload
+
+        gas_stations = await self.repo.list_gas_stations()
+        items = []
+        for gas_station in gas_stations:
+            distance_km = self._calculate_distance_km(latitude, longitude, gas_station.latitude, gas_station.longitude)
+            items.append(
+                {
+                    "id": gas_station.id,
+                    "name": gas_station.name,
+                    "latitude": float(gas_station.latitude),
+                    "longitude": float(gas_station.longitude),
+                    "distance_km": round(distance_km, 2),
+                }
+            )
+        items.sort(key=lambda item: item["distance_km"])
+        home_payload["nearby_gas_stations"]["items"] = items[:3]
+        return home_payload
+
+    def _format_home_datetime(self, value: datetime) -> str:
+        month_names = [
+            "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
+            "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
+        ]
+        return f"{value.day:02d} {month_names[value.month - 1]} {value.year}, {value.hour:02d}:{value.minute:02d}"
+
+    def _calculate_distance_km(self, latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:
+        earth_radius_km = 6371.0
+        lat_a = math.radians(latitude_a)
+        lon_a = math.radians(longitude_a)
+        lat_b = math.radians(latitude_b)
+        lon_b = math.radians(longitude_b)
+        delta_lat = lat_b - lat_a
+        delta_lon = lon_b - lon_a
+
+        a = (
+            math.sin(delta_lat / 2) ** 2
+            + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return earth_radius_km * c
+
+    async def get_user_profile_detail(self, user_id: str) -> dict:
+        from sqlalchemy import select, func
+        from sqlalchemy.orm import selectinload
+        from app.modules.users.models import BuyerProfile, VerificationStatus
+        from app.modules.registries.models import KK
+        from app.modules.wallets.models import Wallet, OwnerType
+        from app.modules.vehicles.models import VehicleOwnership, VehicleOwnerType
+        from app.modules.subsidies.models import KKSubsidyEligibility, EligibilityStatus, SubsidyQuota, SubsidyOwnerType
+        from datetime import datetime
+
+        user = await self.repo.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        db = self.repo.db
+
+        # Fetch Wallet
+        wallet_result = await db.execute(
+            select(Wallet).filter(Wallet.owner_id == user.id, Wallet.owner_type == OwnerType.USER)
+        )
+        wallet = wallet_result.scalars().first()
+        wallet_balance = int(wallet.balance) if wallet else 0
+
+        # Default values if no buyer profile exists
+        nik_masked = ""
+        is_verified = False
+        is_eligible = False
+        family_card_number = ""
+        vehicles_count = 0
+        quota_remaining = 0
+
+        # Fetch BuyerProfile
+        profile_result = await db.execute(
+            select(BuyerProfile)
+            .options(selectinload(BuyerProfile.kk))
+            .filter(BuyerProfile.user_id == user.id)
+        )
+        buyer_profile = profile_result.scalars().first()
+
+        if buyer_profile:
+            # nikMasked
+            nik = buyer_profile.nik_snapshot
+            if len(nik) >= 8:
+                nik_masked = f"{nik[:4]}****{nik[-4:]}"
+            else:
+                nik_masked = nik
+
+            # isVerified
+            is_verified = buyer_profile.verification_status == VerificationStatus.VERIFIED
+
+            # familyCardNumber
+            if buyer_profile.kk:
+                family_card_number = buyer_profile.kk.code
+
+            # isEligible
+            eligibility_result = await db.execute(
+                select(KKSubsidyEligibility)
+                .filter(KKSubsidyEligibility.kk_id == buyer_profile.kk_id)
+                .order_by(KKSubsidyEligibility.checked_at.desc(), KKSubsidyEligibility.id.desc())
+            )
+            eligibility = eligibility_result.scalars().first()
+            if eligibility:
+                is_eligible = eligibility.eligibility_status == EligibilityStatus.ELIGIBLE
+            else:
+                is_eligible = is_verified
+
+            # vehiclesCount
+            vehicles_result = await db.execute(
+                select(func.count(VehicleOwnership.id))
+                .filter(
+                    VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
+                    VehicleOwnership.owner_id == buyer_profile.id
+                )
+            )
+            vehicles_count = vehicles_result.scalar() or 0
+
+            # quotaRemaining
+            now = datetime.utcnow()
+            quota_result = await db.execute(
+                select(SubsidyQuota)
+                .filter(
+                    SubsidyQuota.owner_type == SubsidyOwnerType.BUYER_PROFILE,
+                    SubsidyQuota.owner_id == buyer_profile.id,
+                    SubsidyQuota.month == now.month,
+                    SubsidyQuota.year == now.year
+                )
+            )
+            quota = quota_result.scalars().first()
+            if quota:
+                quota_remaining = int(quota.quota_liters - quota.used_liters)
+            else:
+                # Fallback to a default like 150
+                quota_remaining = 150
+
+        return {
+            "name": user.name,
+            "nikMasked": nik_masked,
+            "isVerified": is_verified,
+            "isEligible": is_eligible,
+            "familyCardNumber": family_card_number,
+            "vehiclesCount": vehicles_count,
+            "quotaRemaining": quota_remaining,
+            "walletBalance": wallet_balance
+        }
+
+    async def get_buyer_quota_detail(self, user_id: str) -> dict:
+        buyer_profile = await self.repo.get_buyer_profile_by_user_id(user_id)
+        if not buyer_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Buyer profile not found.",
+            )
+
+        current_time = datetime.utcnow()
+        personal_quota = await self.subsidy_service.get_or_sync_personal_quota(
+            buyer_profile=buyer_profile,
+            month=current_time.month,
+            year=current_time.year,
+        )
+        quota_liters = float(Decimal(personal_quota.quota_liters))
+        used_liters = float(Decimal(personal_quota.used_liters))
+        remaining_liters = max(quota_liters - used_liters, 0.0)
+
+        # Local imports to prevent circular references
+        from app.modules.fuels.models import FuelType, SubsidyType
+        from app.modules.vehicles.models import VehicleOwnership
+        from app.modules.registries.models import VehicleRegistryMockup
+        from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus
+        from sqlalchemy import select, func
+
+        # 1. Fetch subsidized fuel types
+        fuels_result = await self.repo.db.execute(
+            select(FuelType).filter(FuelType.subsidy_type == SubsidyType.SUBSIDIZED)
+        )
+        subsidized_fuels = [
+            {
+                "id": fuel.id,
+                "name": fuel.name,
+                "price_per_liter": float(Decimal(fuel.price_per_liter)),
+                "subsidy_price_per_liter": float(Decimal(fuel.subsidy_price_per_liter)) if fuel.subsidy_price_per_liter is not None else None,
+            }
+            for fuel in fuels_result.scalars().all()
+        ]
+
+        # 2. Fetch vehicles and total purchase liters
+        vehicles_query = (
+            select(VehicleOwnership, VehicleRegistryMockup.brand)
+            .join(VehicleRegistryMockup, VehicleOwnership.vehicle_id == VehicleRegistryMockup.id)
+            .filter(VehicleOwnership.ktp_nfc_id_snapshot == buyer_profile.ktp_nfc_id_snapshot)
+        )
+        vehicles_result = await self.repo.db.execute(vehicles_query)
+        
+        vehicles_list = []
+        for ownership, brand in vehicles_result.all():
+            # Query completed fuel transactions sum for this vehicle ownership
+            liters_query = (
+                select(func.coalesce(func.sum(FuelTransaction.liters), 0))
+                .filter(
+                    FuelTransaction.vehicle_ownership_id == ownership.id,
+                    FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+                )
+            )
+            liters_result = await self.repo.db.execute(liters_query)
+            total_liters = float(Decimal(liters_result.scalar()))
+
+            vehicles_list.append({
+                "id": ownership.id,
+                "plate_number": ownership.plate_number_snapshot,
+                "brand": brand,
+                "total_liters_purchased": total_liters
+            })
+
+        return {
+            "personal_quota": {
+                "month": current_time.month,
+                "year": current_time.year,
+                "quota_liters": quota_liters,
+                "used_liters": used_liters,
+                "remaining_liters": remaining_liters,
+            },
+            "subsidized_fuels": subsidized_fuels,
+            "vehicles": vehicles_list
         }

@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     POSTGRES_PORT: str
     DATABASE_URL: str
 
+    XENDIT_SECRET_KEY: str
+    XENDIT_CALLBACK_TOKEN: str
+    XENDIT_SUCCESS_URL: str
+    XENDIT_CANCEL_URL: str
+    MIN_TOPUP_AMOUNT: float = 10000.00
+    QRIS_SECRET_KEY: str = "YTAU!@*@!^18728yLAHD{:{{"
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 settings = Settings()

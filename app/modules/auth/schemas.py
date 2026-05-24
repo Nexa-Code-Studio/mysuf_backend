@@ -29,3 +29,8 @@ class LoginRequest(BaseModel):
     email: str
     password: str
     client_type: str  # e.g., "ADMIN_WEB", "POS_ANDROID", "BUYER_ANDROID"
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+    client_type: str

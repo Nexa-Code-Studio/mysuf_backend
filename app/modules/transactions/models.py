@@ -20,10 +20,12 @@ class PaymentStatus(str, enum.Enum):
 
 class TransactionType(str, enum.Enum):
     TOP_UP = "TOP_UP"
+    FUEL_PURCHASE = "FUEL_PURCHASE"
     PAYMENT = "PAYMENT"
     WITHDRAWAL = "WITHDRAWAL"
     REFUND = "REFUND"
     TRANSFER = "TRANSFER"
+    ADMIN_ADJUSTMENT = "ADMIN_ADJUSTMENT"
 
 class TransactionFlow(str, enum.Enum):
     IN = "IN"
@@ -59,6 +61,7 @@ class PaymentTransaction(Base):
     provider = Column(Enum(PaymentProvider, name="payment_provider_enum"), nullable=False)
     external_id = Column(String, nullable=False)
     provider_reference_id = Column(String, nullable=True)
+    payment_link_url = Column(String, nullable=True)
 
     amount = Column(Numeric(18, 2), nullable=False)
     status = Column(Enum(PaymentStatus, name="payment_status_enum"), nullable=False)
@@ -147,3 +150,13 @@ class FuelTransaction(Base):
     subsidy_quota = relationship("SubsidyQuota", back_populates="fuel_transactions")
     kk_subsidy_eligibility = relationship("KKSubsidyEligibility", back_populates="fuel_transactions")
     wallet_transaction = relationship("WalletTransaction", back_populates="fuel_transactions")
+
+
+class WebhookAuditLog(Base):
+    __tablename__ = "webhook_audit_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    provider = Column(String, nullable=False)
+    event_type = Column(String, nullable=False)
+    payload = Column(String, nullable=False)  # Raw JSON payload
+    created_at = Column(DateTime, default=datetime.utcnow)
