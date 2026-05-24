@@ -1,7 +1,7 @@
 import math
 from datetime import datetime
 from decimal import Decimal
-from typing import List
+from typing import Any, List
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -422,6 +422,7 @@ class UserService:
         family_card_number = ""
         vehicles_count = 0
         quota_remaining = 0
+        is_pin_active = False
 
         # Fetch BuyerProfile
         profile_result = await db.execute(
@@ -432,6 +433,7 @@ class UserService:
         buyer_profile = profile_result.scalars().first()
 
         if buyer_profile:
+            is_pin_active = buyer_profile.is_pin_active
             # nikMasked
             nik = buyer_profile.nik_snapshot
             if len(nik) >= 8:
@@ -494,7 +496,8 @@ class UserService:
             "familyCardNumber": family_card_number,
             "vehiclesCount": vehicles_count,
             "quotaRemaining": quota_remaining,
-            "walletBalance": wallet_balance
+            "walletBalance": wallet_balance,
+            "isPinActive": is_pin_active
         }
 
     async def get_buyer_quota_detail(self, user_id: str) -> dict:
@@ -571,7 +574,58 @@ class UserService:
                 "quota_liters": quota_liters,
                 "used_liters": used_liters,
                 "remaining_liters": remaining_liters,
-            },
+                },
             "subsidized_fuels": subsidized_fuels,
             "vehicles": vehicles_list
         }
+
+    async def update_buyer_pin(self, user_id: str, pin_in: Any) -> dict:
+        from app.core.security import get_password_hash, verify_password
+        
+        if not pin_in.pin.isdigit() or len(pin_in.pin) != 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PIN harus berupa 6 digit angka."
+            )
+            
+        profile = await self.repo.get_buyer_profile_by_user_id(user_id)
+        if not profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Profil buyer tidak ditemukan."
+            )
+            
+        if profile.is_pin_active:
+            if not pin_in.old_pin:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="PIN lama harus dimasukkan."
+                )
+            if not verify_password(pin_in.old_pin, profile.pin_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="PIN lama salah."
+                )
+                
+        profile.pin_hash = get_password_hash(pin_in.pin)
+        profile.is_pin_active = True
+        
+        await self.repo.update_buyer_profile(profile)
+        return {"message": "PIN berhasil disimpan."}
+
+    async def update_device_token(self, user_id: str, token: str) -> dict:
+        """
+        Updates the authenticated user's FCM device token.
+        """
+        user = await self.repo.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User tidak ditemukan."
+            )
+        user.fcm_token = token
+        await self.repo.db.commit()
+        await self.repo.db.refresh(user)
+        return {"message": "Token perangkat berhasil didaftarkan."}
+
+

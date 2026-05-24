@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # ----------------------------------------------------
 # Pagination Schemas
@@ -28,8 +28,7 @@ class KKUpdate(BaseModel):
 class KKResponse(KKBase):
     id: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class KKListResponse(BaseModel):
     items: List[KKResponse]
@@ -56,8 +55,7 @@ class CitizenUpdate(BaseModel):
 class CitizenResponse(CitizenBase):
     id: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class CitizenListResponse(BaseModel):
     items: List[CitizenResponse]
@@ -100,8 +98,7 @@ class VehicleResponse(VehicleBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class VehicleListResponse(BaseModel):
     items: List[VehicleResponse]

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.modules.vehicles.models import (
     VehicleOwnershipDocumentType,
@@ -41,8 +41,7 @@ class VehicleOwnershipDocumentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VehicleOwnershipResponse(BaseModel):
@@ -60,8 +59,7 @@ class VehicleOwnershipResponse(BaseModel):
     updated_at: datetime
     documents: List[VehicleOwnershipDocumentResponse]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VehicleOwnershipListResponse(BaseModel):
@@ -77,8 +75,7 @@ class VehicleOwnershipRequestStatusResponse(BaseModel):
     submitted_at: datetime
     reviewed_at: datetime | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BuyerVehicleSubmissionResponse(BaseModel):

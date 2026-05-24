@@ -29,6 +29,7 @@ from app.modules.fuels import models
 from app.modules.subsidies import models
 from app.modules.vehicles import models
 from app.modules.registries import models
+from app.modules.notifications import models
 
 target_metadata = Base.metadata
 

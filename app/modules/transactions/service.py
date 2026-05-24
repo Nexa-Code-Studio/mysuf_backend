@@ -1,6 +1,7 @@
 import httpx
 import logging
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -366,7 +367,169 @@ class TransactionService:
         await self.db.commit()
         await self.db.refresh(payment_tx)
         
+        # Trigger Firebase Push Notification & Persist Notification
+        try:
+            from app.modules.notifications.service import NotificationService
+            formatted_amount = f"Rp {int(payment_tx.amount):,}".replace(",", ".")
+            await NotificationService.create_notification(
+                db=self.db,
+                user_id=wallet.owner_id,
+                title="Top Up Berhasil",
+                body=f"Top up sebesar {formatted_amount} berhasil masuk ke dompet Anda.",
+                data={"type": "TOP_UP", "transaction_id": str(payment_tx.id)}
+            )
+        except Exception as push_err:
+            logger.error(f"Failed to trigger Topup push notification: {push_err}")
+        
         logger.info(
             f"Successfully credited top-up of IDR {payment_tx.amount} to wallet {wallet.id}. "
             f"Balance updated from {balance_before} to {balance_after}."
         )
+
+    async def search_recipient_by_nik(self, current_user_id: UUID, recipient_nik: str) -> dict:
+        from app.modules.users.models import BuyerProfile
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        stmt = select(BuyerProfile).options(selectinload(BuyerProfile.user)).filter(BuyerProfile.nik_snapshot == recipient_nik)
+        res = await self.db.execute(stmt)
+        profile = res.scalars().first()
+        
+        if not profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Penerima dengan NIK tersebut tidak ditemukan."
+            )
+            
+        if profile.user_id == current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Anda tidak dapat mentransfer saldo ke diri sendiri."
+            )
+            
+        nik = profile.nik_snapshot
+        nik_masked = f"{nik[:4]}****{nik[-4:]}" if len(nik) >= 8 else nik
+        
+        return {
+            "name": profile.user.name,
+            "nik_masked": nik_masked,
+            "recipient_user_id": profile.user_id
+        }
+
+    async def execute_wallet_transfer(self, sender_user_id: UUID, request: Any) -> dict:
+        from app.modules.users.models import BuyerProfile, User
+        from app.core.security import verify_password
+        from sqlalchemy import select
+
+        # 1. Search for verified recipient
+        recipient_info = await self.search_recipient_by_nik(sender_user_id, request.recipient_nik)
+        recipient_user_id = recipient_info["recipient_user_id"]
+        recipient_name = recipient_info["name"]
+
+        # 2. Check Sender's profile and active PIN status
+        stmt = select(BuyerProfile).filter(BuyerProfile.user_id == sender_user_id)
+        res = await self.db.execute(stmt)
+        sender_profile = res.scalars().first()
+        
+        if not sender_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Profil pengirim tidak ditemukan."
+            )
+
+        if sender_profile.is_pin_active:
+            if not request.pin:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="PIN transaksi diperlukan."
+                )
+            if not verify_password(request.pin, sender_profile.pin_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="PIN transaksi salah."
+                )
+
+        # 3. Retrieve Wallets and check balances
+        sender_wallet = await self.wallet_service.get_or_create_user_wallet(sender_user_id)
+        recipient_wallet = await self.wallet_service.get_or_create_user_wallet(recipient_user_id)
+
+        if sender_wallet.balance < request.amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Saldo Anda tidak mencukupi untuk melakukan transfer."
+            )
+
+        # 4. Atomic balance adjustments
+        sender_before = sender_wallet.balance
+        sender_wallet.balance -= request.amount
+        sender_after = sender_wallet.balance
+
+        recipient_before = recipient_wallet.balance
+        recipient_wallet.balance += request.amount
+        recipient_after = recipient_wallet.balance
+
+        # 5. Create transaction log records
+        sender_tx = WalletTransaction(
+            wallet_id=sender_wallet.id,
+            type=TransactionType.TRANSFER,
+            transaction_flow=TransactionFlow.OUT,
+            amount=request.amount,
+            balance_before=sender_before,
+            balance_after=sender_after,
+            counterparty_wallet_id=recipient_wallet.id,
+            description=f"Transfer ke {recipient_name}",
+            status=WalletTransactionStatus.SUCCESS
+        )
+
+        stmt_sender = select(User).filter(User.id == sender_user_id)
+        res_sender = await self.db.execute(stmt_sender)
+        sender_user = res_sender.scalars().first()
+        sender_name = sender_user.name if sender_user else "Pengirim"
+
+        recipient_tx = WalletTransaction(
+            wallet_id=recipient_wallet.id,
+            type=TransactionType.TRANSFER,
+            transaction_flow=TransactionFlow.IN,
+            amount=request.amount,
+            balance_before=recipient_before,
+            balance_after=recipient_after,
+            counterparty_wallet_id=sender_wallet.id,
+            description=f"Transfer dari {sender_name}",
+            status=WalletTransactionStatus.SUCCESS
+        )
+
+        await self.repo.create_wallet_transaction(sender_tx)
+        await self.repo.create_wallet_transaction(recipient_tx)
+        await self.db.commit()
+
+        # Trigger Firebase Push Notifications & Persist Notifications
+        try:
+            from app.modules.notifications.service import NotificationService
+            formatted_amount = f"Rp {int(request.amount):,}".replace(",", ".")
+            
+            # 1. Notify Sender
+            await NotificationService.create_notification(
+                db=self.db,
+                user_id=sender_user.id,
+                title="Transfer Berhasil",
+                body=f"Anda berhasil mengirimkan {formatted_amount} ke {recipient_name}.",
+                data={"type": "TRANSFER_OUT", "transaction_id": str(sender_tx.id)}
+            )
+                
+            # 2. Notify Recipient
+            await NotificationService.create_notification(
+                db=self.db,
+                user_id=recipient_wallet.owner_id,
+                title="Saldo Masuk",
+                body=f"Anda menerima transfer sebesar {formatted_amount} dari {sender_name}.",
+                data={"type": "TRANSFER_IN", "transaction_id": str(recipient_tx.id)}
+            )
+        except Exception as push_err:
+            logger.error(f"Failed to trigger transfer push notification: {push_err}")
+
+        return {
+            "message": "Transfer berhasil dilakukan.",
+            "amount": float(request.amount),
+            "recipient_name": recipient_name
+        }
+

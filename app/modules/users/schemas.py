@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Literal, Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from uuid import UUID
 
 from app.modules.users.models import UserRole, VerificationStatus
@@ -31,8 +31,7 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     id: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PaginationMeta(BaseModel):
     page: int
@@ -64,8 +63,7 @@ class BuyerProfileResponse(BaseModel):
     risk_score: Decimal
     timestamp: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BuyerProfileCheckResponse(BaseModel):
     has_buyer_profile: bool
@@ -81,6 +79,11 @@ class UserProfileResponse(BaseModel):
     vehiclesCount: int
     quotaRemaining: int
     walletBalance: int
+    isPinActive: bool = False
+
+class UserPinUpdate(BaseModel):
+    pin: str
+    old_pin: Optional[str] = None
 
 
 class HomeVehicleVerificationResponse(BaseModel):
@@ -160,3 +163,8 @@ class BuyerQuotaResponse(BaseModel):
     personal_quota: HomePersonalQuotaResponse
     subsidized_fuels: List[SubsidizedFuelResponse]
     vehicles: List[VehicleQuotaDetailResponse]
+
+
+class UserDeviceTokenUpdate(BaseModel):
+    token: str
+

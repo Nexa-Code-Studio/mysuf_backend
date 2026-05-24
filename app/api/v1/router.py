@@ -8,6 +8,7 @@ from app.api.v1.routes import vehicles as vehicles_routes
 from app.api.v1.routes import registries as registries_routes
 from app.api.v1.routes import wallet as wallet_routes
 from app.api.v1.routes import webhooks as webhook_routes
+from app.api.v1.routes import notifications as notification_routes
 
 api_router = APIRouter()
 api_router.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
@@ -19,3 +20,4 @@ api_router.include_router(vehicles_routes.router, prefix="/vehicle-ownerships", 
 api_router.include_router(registries_routes.router, prefix="/registries", tags=["registries"])
 api_router.include_router(wallet_routes.router, prefix="/wallet", tags=["wallet"])
 api_router.include_router(webhook_routes.router, prefix="/webhooks", tags=["webhooks"])
+api_router.include_router(notification_routes.router, prefix="/notifications", tags=["notifications"])

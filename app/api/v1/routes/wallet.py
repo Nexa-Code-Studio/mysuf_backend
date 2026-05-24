@@ -11,7 +11,9 @@ from app.modules.transactions.schemas import (
     TopUpRequest,
     TopUpResponse,
     WalletTransactionResponse,
-    PaginatedWalletTransactionsResponse
+    PaginatedWalletTransactionsResponse,
+    SearchRecipientResponse,
+    TransferRequest,
 )
 from app.modules.transactions.service import TransactionService
 
@@ -96,3 +98,30 @@ async def get_wallet_transaction_detail(
     """
     service = TransactionService(db)
     return await service.get_wallet_transaction_detail(id, current_user.id)
+
+
+@router.get("/search-recipient", response_model=SearchRecipientResponse)
+async def search_recipient(
+    nik: str,
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Search for a transaction recipient by NIK snapshot.
+    """
+    service = TransactionService(db)
+    return await service.search_recipient_by_nik(current_user.id, nik)
+
+
+@router.post("/transfer")
+async def execute_transfer(
+    request: TransferRequest,
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Execute a secure peer-to-peer wallet transfer.
+    """
+    service = TransactionService(db)
+    return await service.execute_wallet_transfer(current_user.id, request)
+
