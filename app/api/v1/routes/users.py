@@ -7,7 +7,7 @@ from app.modules.users.models import User, UserRole
 from app.modules.users.schemas import (
     UserCreate, UserUpdate, UserResponse, UserListResponse,
     BuyerProfileCreate, BuyerProfileUpdate, BuyerProfileResponse, BuyerProfileCheckResponse,
-    UserProfileResponse, BuyerHomeResponse, BuyerQuotaResponse,
+    UserProfileResponse, BuyerHomeResponse, BuyerQuotaResponse, UserPinUpdate, UserDeviceTokenUpdate,
 )
 from app.modules.users.service import UserService
 
@@ -65,6 +65,18 @@ async def update_buyer_profile(
     """
     service = UserService(db)
     return await service.update_buyer_profile(user_id=str(current_user.id), profile_in=profile_in)
+
+@router.post("/me/pin")
+async def create_or_update_pin(
+    pin_in: UserPinUpdate,
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Create or update PIN for the current authenticated user. Only for BUYER role.
+    """
+    service = UserService(db)
+    return await service.update_buyer_pin(user_id=str(current_user.id), pin_in=pin_in)
 
 @router.get("/me/buyer-profile/check", response_model=BuyerProfileCheckResponse)
 async def check_buyer_profile(
@@ -125,6 +137,20 @@ async def read_buyer_quota(
     """
     service = UserService(db)
     return await service.get_buyer_quota_detail(user_id=str(current_user.id))
+
+
+@router.post("/me/device-token")
+async def update_user_device_token(
+    request: UserDeviceTokenUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Register or update the authenticated user's FCM device token.
+    """
+    service = UserService(db)
+    return await service.update_device_token(user_id=str(current_user.id), token=request.token)
+
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(

@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from app.modules.wallets.models import OwnerType
 
 class WalletBase(BaseModel):
@@ -17,5 +17,4 @@ class WalletResponse(WalletBase):
     nik_masked: str | None = None
     nik: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

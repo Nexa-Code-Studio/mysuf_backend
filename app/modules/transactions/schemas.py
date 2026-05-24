@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List
 from uuid import UUID
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from app.core.config import settings
 from app.modules.transactions.models import (
     PaymentStatus,
@@ -36,8 +36,7 @@ class TopUpResponse(BaseModel):
     status: PaymentStatus
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WalletTransactionResponse(BaseModel):
@@ -58,8 +57,7 @@ class WalletTransactionResponse(BaseModel):
     gas_station_name: str | None = None
     liters: Decimal | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedWalletTransactionsResponse(BaseModel):
@@ -68,3 +66,21 @@ class PaginatedWalletTransactionsResponse(BaseModel):
     page: int
     size: int
     pages: int
+
+class SearchRecipientResponse(BaseModel):
+    name: str
+    nik_masked: str
+    recipient_user_id: UUID
+
+class TransferRequest(BaseModel):
+    recipient_nik: str
+    amount: Decimal
+    pin: str | None = None
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, v: Decimal) -> Decimal:
+        if v < Decimal("10000"):
+            raise ValueError("Minimal nominal transfer adalah Rp 10.000")
+        return v
+

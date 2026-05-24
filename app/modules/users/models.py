@@ -32,10 +32,10 @@ class User(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     employee_id = Column(String, nullable=True)
+    fcm_token = Column(String, nullable=True)
     gas_station_id = Column(UUID(as_uuid=True), ForeignKey("gas_stations.id"), nullable=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
 
-    # Relationships
     buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     assigned_vehicles = relationship("VehicleOwnership", back_populates="assigned_user")
     completed_registration_attempts = relationship(
@@ -43,6 +43,7 @@ class User(Base):
         back_populates="created_user",
         foreign_keys="BuyerRegistrationAttempt.created_user_id",
     )
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 
 
 class BuyerProfile(Base):
@@ -55,6 +56,9 @@ class BuyerProfile(Base):
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
     kk_id = Column(UUID(as_uuid=True), ForeignKey("kk.id"), nullable=False, index=True)
+
+    pin_hash = Column(String, nullable=True)
+    is_pin_active = Column(Boolean, default=False, nullable=False)
 
     verification_status = Column(Enum(VerificationStatus, name="verification_status_enum"), default=VerificationStatus.UNVERIFIED, nullable=False)
     risk_score = Column(Numeric(5, 2), nullable=False, default=0)
