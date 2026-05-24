@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Column, String, DateTime, Numeric, Integer, ForeignKey
+from sqlalchemy import Column, String, DateTime, Numeric, Integer, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -14,8 +14,12 @@ class KK(Base):
 
     # Relationships
     buyer_profiles = relationship("BuyerProfile", back_populates="kk")
+    buyer_registration_attempts = relationship(
+        "BuyerRegistrationAttempt",
+        back_populates="registry_kk",
+        foreign_keys="BuyerRegistrationAttempt.registry_kk_id_snapshot",
+    )
     kk_subsidy_eligibilities = relationship("KKSubsidyEligibility", back_populates="kk")
-    kk_vehicles = relationship("KKVehicle", back_populates="kk")
 
 
 class CitizenRegistryMockup(Base):
@@ -30,10 +34,20 @@ class CitizenRegistryMockup(Base):
 
     # Relationships
     kk = relationship("KK")
+    buyer_registration_attempts = relationship(
+        "BuyerRegistrationAttempt",
+        back_populates="registry_citizen",
+        foreign_keys="BuyerRegistrationAttempt.registry_citizen_id",
+    )
 
 
 class VehicleRegistryMockup(Base):
     __tablename__ = "vehicle_registry_mockup"
+    __table_args__ = (
+        Index("ix_vehicle_registry_mockup_plate_number", "plate_number"),
+        Index("ix_vehicle_registry_mockup_registration_number", "registration_number"),
+        Index("ix_vehicle_registry_mockup_owner_nik", "owner_nik"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
 

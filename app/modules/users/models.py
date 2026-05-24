@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Column, String, Boolean, DateTime, Enum, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 
@@ -38,6 +38,11 @@ class User(Base):
     # Relationships
     buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     assigned_vehicles = relationship("VehicleOwnership", back_populates="assigned_user")
+    completed_registration_attempts = relationship(
+        "BuyerRegistrationAttempt",
+        back_populates="created_user",
+        foreign_keys="BuyerRegistrationAttempt.created_user_id",
+    )
 
 
 class BuyerProfile(Base):
@@ -49,13 +54,19 @@ class BuyerProfile(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)
-    kk_id = Column(UUID(as_uuid=True), ForeignKey("kk.id"), nullable=False)
+    kk_id = Column(UUID(as_uuid=True), ForeignKey("kk.id"), nullable=False, index=True)
 
     verification_status = Column(Enum(VerificationStatus, name="verification_status_enum"), default=VerificationStatus.UNVERIFIED, nullable=False)
+    risk_score = Column(Numeric(5, 2), nullable=False, default=0)
 
     # Relationships
     user = relationship("User", back_populates="buyer_profile")
     kk = relationship("KK", back_populates="buyer_profiles")
     fuel_transactions = relationship("FuelTransaction", back_populates="buyer_profile")
     subsidy_quotas = relationship("SubsidyQuota", primaryjoin="and_(foreign(SubsidyQuota.owner_id)==BuyerProfile.id, SubsidyQuota.owner_type=='BUYER_PROFILE')")
-
+    documents = relationship("BuyerProfileDocument", back_populates="buyer_profile", cascade="all, delete-orphan")
+    registration_attempts = relationship(
+        "BuyerRegistrationAttempt",
+        back_populates="created_buyer_profile",
+        foreign_keys="BuyerRegistrationAttempt.created_buyer_profile_id",
+    )
