@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.registries.models import CitizenRegistryMockup
 from app.modules.subsidies.models import EligibilityStatus, KKSubsidyEligibility, SubsidyOwnerType
 from app.modules.users.models import User, VerificationStatus
+from app.modules.transactions.models import CashierScanMethod, CashierScanResult
+from app.modules.transactions.service import TransactionService
 from app.modules.vehicles.models import (
     VehicleOwnership,
     VehicleOwnershipDocument,
@@ -36,7 +38,9 @@ class VehicleService:
     MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024
 
     def __init__(self, db: AsyncSession):
+        self.db = db
         self.repo = VehicleRepository(db)
+        self.transaction_service = TransactionService(db)
 
     async def get_vehicle_ownerships(self, page: int = 1, page_size: int = 20) -> dict:
         skip = (page - 1) * page_size
@@ -116,6 +120,100 @@ class VehicleService:
             )
 
         return {"items": items}
+
+    async def get_cashier_buyer_by_nfc(self, current_user: User, nfc_id: str) -> dict:
+        buyer_profile = await self.repo.get_buyer_profile_by_ktp_nfc_id_snapshot(nfc_id)
+        lookup_method = CashierScanMethod.NFC
+        if not buyer_profile:
+            # Fallback to search by NIK snapshot
+            from app.modules.users.models import BuyerProfile
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            stmt = select(BuyerProfile).options(selectinload(BuyerProfile.user)).filter(BuyerProfile.nik_snapshot == nfc_id)
+            res = await self.db.execute(stmt)
+            buyer_profile = res.scalars().first()
+            lookup_method = CashierScanMethod.NIK
+
+        if not buyer_profile or buyer_profile.user is None:
+            await self.transaction_service.log_cashier_scan_event(
+                cashier_user=current_user,
+                lookup_method=lookup_method,
+                lookup_value=nfc_id,
+                result=CashierScanResult.FAILED,
+                error_message="Buyer profile not found for the provided NFC ID or NIK.",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Buyer profile not found for the provided NFC ID or NIK.",
+            )
+
+        ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(
+            buyer_profile.ktp_nfc_id_snapshot
+        )
+        vehicles = []
+        current_time = self._utcnow()
+        for ownership in ownerships:
+            registry_vehicle = await self.repo.get_vehicle_registry_by_id(ownership.vehicle_id)
+            type_label = ownership.plate_number_snapshot
+            if registry_vehicle is not None:
+                type_label = f"{registry_vehicle.brand} - {registry_vehicle.vehicle_type}"
+
+            quota_summary = await self._build_vehicle_quota_summary(
+                ownership=ownership,
+                buyer_profile=buyer_profile,
+                month=current_time.month,
+                year=current_time.year,
+            )
+            is_eligible = quota_summary["quota_liters"] is not None
+
+            vehicles.append(
+                {
+                    "ownership_id": ownership.id,
+                    "vehicle_id": ownership.vehicle_id,
+                    "plate_number": ownership.plate_number_snapshot,
+                    "registration_number": (
+                        registry_vehicle.registration_number if registry_vehicle is not None else None
+                    ),
+                    "type_label": type_label,
+                    "category": self._to_vehicle_category(ownership.usage_type),
+                    "ownership_status": ownership.ownership_status,
+                    "usage_type": ownership.usage_type,
+                    "brand": registry_vehicle.brand if registry_vehicle is not None else None,
+                    "vehicle_type": (
+                        registry_vehicle.vehicle_type if registry_vehicle is not None else None
+                    ),
+                    "color": registry_vehicle.color if registry_vehicle is not None else None,
+                    "manufacture_year": (
+                        registry_vehicle.manufacture_year if registry_vehicle is not None else None
+                    ),
+                    "is_eligible": is_eligible,
+                    "quota_liters": quota_summary["quota_liters"],
+                    "used_liters": quota_summary["used_liters"],
+                    "remaining_liters": quota_summary["remaining_liters"],
+                }
+            )
+
+        response = {
+            "buyer": {
+                "buyer_profile_id": buyer_profile.id,
+                "user_id": buyer_profile.user_id,
+                "name": buyer_profile.user.name,
+                "nik_snapshot": buyer_profile.nik_snapshot,
+                "verification_status": buyer_profile.verification_status.value,
+                "risk_score": float(Decimal(buyer_profile.risk_score)),
+                "is_pin_active": buyer_profile.is_pin_active,
+            },
+            "vehicles": vehicles,
+        }
+
+        await self.transaction_service.log_cashier_scan_event(
+            cashier_user=current_user,
+            lookup_method=lookup_method,
+            lookup_value=nfc_id,
+            result=CashierScanResult.SUCCESS,
+            buyer_profile=buyer_profile,
+        )
+        return response
 
     async def get_buyer_vehicle_ownership_detail(
         self,

@@ -20,6 +20,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 from app.core.database import Base
 from app.modules.users import models
+from app.modules.auth import models
 from app.modules.buyer_registrations import models
 from app.modules.companies import models
 from app.modules.gas_stations import models

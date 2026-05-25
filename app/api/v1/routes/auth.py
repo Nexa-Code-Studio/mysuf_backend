@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user_with_payload
 from app.modules.users.models import User
-from app.modules.auth.schemas import LoginRequest, LoginResponse, RefreshTokenRequest
+from app.modules.auth.schemas import LoginRequest, LoginResponse, LogoutResponse, RefreshTokenRequest
 from app.modules.auth.service import AuthService
 
 router = APIRouter()
@@ -34,3 +34,13 @@ async def read_users_me(
     user, payload = user_and_payload
     service = AuthService(db)
     return await service.get_me_response(user, payload)
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    user_and_payload: tuple[User, dict] = Depends(get_current_user_with_payload),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    user, payload = user_and_payload
+    service = AuthService(db)
+    return await service.logout(user, payload)

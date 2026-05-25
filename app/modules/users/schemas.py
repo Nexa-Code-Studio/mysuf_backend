@@ -139,7 +139,7 @@ class HomeRiskStatusResponse(BaseModel):
 
 class BuyerHomeResponse(BaseModel):
     vehicle_verification: HomeVehicleVerificationResponse
-    personal_quota: HomePersonalQuotaResponse
+    personal_quota: Optional[HomePersonalQuotaResponse] = None
     nearby_gas_stations: HomeNearbyGasStationsResponse
     recent_transactions: List[HomeRecentTransactionResponse]
     risk_status: HomeRiskStatusResponse
@@ -160,11 +160,10 @@ class VehicleQuotaDetailResponse(BaseModel):
 
 
 class BuyerQuotaResponse(BaseModel):
-    personal_quota: HomePersonalQuotaResponse
+    personal_quota: Optional[HomePersonalQuotaResponse] = None
     subsidized_fuels: List[SubsidizedFuelResponse]
     vehicles: List[VehicleQuotaDetailResponse]
 
 
 class UserDeviceTokenUpdate(BaseModel):
     token: str
-

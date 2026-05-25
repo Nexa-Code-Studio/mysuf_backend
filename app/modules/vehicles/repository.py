@@ -85,6 +85,19 @@ class VehicleRepository:
         )
         return result.scalars().first()
 
+    async def get_buyer_profile_by_ktp_nfc_id_snapshot(
+        self,
+        ktp_nfc_id_snapshot: str,
+    ) -> BuyerProfile | None:
+        result = await self.db.execute(
+            select(BuyerProfile)
+            .options(selectinload(BuyerProfile.user))
+            .filter(BuyerProfile.ktp_nfc_id_snapshot == ktp_nfc_id_snapshot)
+            .order_by(BuyerProfile.timestamp.desc(), BuyerProfile.id.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
     async def create_vehicle_ownership_request(
         self,
         request: VehicleOwnershipRequest,

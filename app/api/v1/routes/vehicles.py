@@ -17,6 +17,7 @@ from app.modules.vehicles.schemas import (
     BuyerVehicleListResponse,
     BuyerPendingVehicleRequestDetailResponse,
     BuyerPendingVehicleRequestListResponse,
+    CashierBuyerByNfcResponse,
     PublicVehicleOwnershipRequestAccept,
     PublicVehicleOwnershipRequestAcceptResponse,
     VehicleOwnershipListResponse,
@@ -125,6 +126,16 @@ async def read_buyer_vehicle_submission_document(
         request_id=request_id,
         document_id=document_id,
     )
+
+
+@router.get("/cashier/by-nfc/{nfc_id}", response_model=CashierBuyerByNfcResponse)
+async def read_cashier_buyer_by_nfc(
+    nfc_id: str,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    service = VehicleService(db)
+    return await service.get_cashier_buyer_by_nfc(current_user=current_user, nfc_id=nfc_id)
 
 
 @router.get("/{ownership_id}/detail", response_model=BuyerVehicleDetailResponse)

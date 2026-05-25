@@ -5,9 +5,18 @@ from sqlalchemy import delete
 from sqlalchemy.future import select
 
 from app.main import app
+from app.modules.auth.models import AuthSessionRecord
 from app.core.database import AsyncSessionLocal
 from app.modules.registries.models import KK
 from app.modules.users.models import User, UserRole, BuyerProfile
+from app.modules.vehicles.models import (
+    VehicleOwnerType,
+    VehicleOwnership,
+    VehicleOwnershipRequest,
+    VehicleOwnershipStatus,
+    VehicleQuotaMode,
+    VehicleUsageType,
+)
 from app.core.security import get_password_hash, create_access_token
 
 @pytest.mark.anyio
@@ -67,6 +76,10 @@ async def test_buyer_profile_flow():
     )
     
     profile_uuid = None
+    ownership_id = uuid4()
+    request_id = uuid4()
+    vehicle_id = uuid4()
+    next_nfc_id = f"NFC-{uuid4().hex[:12]}"
     
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -157,7 +170,7 @@ async def test_buyer_profile_flow():
             assert profile_data["isEligible"] is False
             assert profile_data["familyCardNumber"].startswith("KK_")
             assert profile_data["vehiclesCount"] == 0
-            assert profile_data["quotaRemaining"] == 150
+            assert profile_data["quotaRemaining"] == 0
             assert profile_data["walletBalance"] == 0
             
             # I. Update profile with invalid KK: PUT /me/buyer-profile -> 400
@@ -172,7 +185,53 @@ async def test_buyer_profile_flow():
             })
             assert res.status_code == 200
             assert res.json()["nik_snapshot"] == "3201010101010002"
-            
+
+            async with AsyncSessionLocal() as session:
+                session.add(
+                    VehicleOwnership(
+                        id=ownership_id,
+                        owner_type=VehicleOwnerType.BUYER_PROFILE,
+                        owner_id=profile_uuid,
+                        vehicle_id=vehicle_id,
+                        ownership_status=VehicleOwnershipStatus.PERSONAL,
+                        usage_type=VehicleUsageType.PERSONAL,
+                        quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
+                        plate_number_snapshot="B 1234 XYZ",
+                        ktp_nfc_id_snapshot="NFC123456",
+                    )
+                )
+                session.add(
+                    VehicleOwnershipRequest(
+                        id=request_id,
+                        buyer_profile_id=profile_uuid,
+                        vehicle_id=vehicle_id,
+                        ownership_status=VehicleOwnershipStatus.PERSONAL,
+                        usage_type=VehicleUsageType.UMKM,
+                        quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
+                        plate_number_snapshot="B 1234 XYZ",
+                        ktp_nfc_id_snapshot="NFC123456",
+                    )
+                )
+                await session.commit()
+
+            res = await ac.put("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={
+                "ktp_nfc_id_snapshot": next_nfc_id
+            })
+            assert res.status_code == 200
+            assert res.json()["ktp_nfc_id_snapshot"] == next_nfc_id
+
+            async with AsyncSessionLocal() as session:
+                updated_profile = await session.get(BuyerProfile, profile_uuid)
+                updated_ownership = await session.get(VehicleOwnership, ownership_id)
+                updated_request = await session.get(VehicleOwnershipRequest, request_id)
+
+                assert updated_profile is not None
+                assert updated_profile.ktp_nfc_id_snapshot == next_nfc_id
+                assert updated_ownership is not None
+                assert updated_ownership.ktp_nfc_id_snapshot == next_nfc_id
+                assert updated_request is not None
+                assert updated_request.ktp_nfc_id_snapshot == next_nfc_id
+             
             # K. Get /auth/me -> should include BUYER access context with buyer_profile_id
             res = await ac.get("/api/v1/auth/me", headers=buyer_headers)
             assert res.status_code == 200
@@ -186,6 +245,15 @@ async def test_buyer_profile_flow():
     finally:
         # Clean up database
         async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(AuthSessionRecord).where(AuthSessionRecord.user_id.in_([buyer_id, non_buyer_id]))
+            )
+            await session.execute(
+                delete(VehicleOwnershipRequest).where(VehicleOwnershipRequest.id == request_id)
+            )
+            await session.execute(
+                delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id)
+            )
             if profile_uuid:
                 await session.execute(
                     delete(BuyerProfile).where(BuyerProfile.id == profile_uuid)
@@ -196,4 +264,107 @@ async def test_buyer_profile_flow():
             await session.execute(
                 delete(KK).where(KK.id == kk_id)
             )
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_buyer_profile_nfc_update_propagates_to_related_records():
+    kk_id = uuid4()
+    buyer_id = uuid4()
+    profile_id = uuid4()
+    ownership_id = uuid4()
+    request_id = uuid4()
+    vehicle_id = uuid4()
+
+    buyer_email = f"buyer_nfc_{uuid4()}@example.com"
+
+    async with AsyncSessionLocal() as session:
+        session.add(KK(id=kk_id, code=f"KK_{uuid4().hex[:10]}"))
+        session.add(
+            User(
+                id=buyer_id,
+                name="Buyer NFC",
+                email=buyer_email,
+                password=get_password_hash("password123"),
+                role=[UserRole.BUYER],
+                is_active=True,
+            )
+        )
+        session.add(
+            BuyerProfile(
+                id=profile_id,
+                nik_snapshot="3201010101010001",
+                ktp_nfc_id_snapshot="NFC-OLD-001",
+                kk_id=kk_id,
+                user_id=buyer_id,
+            )
+        )
+        session.add(
+            VehicleOwnership(
+                id=ownership_id,
+                owner_type=VehicleOwnerType.BUYER_PROFILE,
+                owner_id=profile_id,
+                vehicle_id=vehicle_id,
+                ownership_status=VehicleOwnershipStatus.PERSONAL,
+                usage_type=VehicleUsageType.PERSONAL,
+                quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
+                plate_number_snapshot="B 1234 XYZ",
+                ktp_nfc_id_snapshot="NFC-OLD-001",
+            )
+        )
+        session.add(
+            VehicleOwnershipRequest(
+                id=request_id,
+                buyer_profile_id=profile_id,
+                vehicle_id=vehicle_id,
+                ownership_status=VehicleOwnershipStatus.PERSONAL,
+                usage_type=VehicleUsageType.UMKM,
+                quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
+                plate_number_snapshot="B 1234 XYZ",
+                ktp_nfc_id_snapshot="NFC-OLD-001",
+            )
+        )
+        await session.commit()
+
+    buyer_token = create_access_token(
+        subject=buyer_id,
+        session_id=str(uuid4()),
+        client_type="BUYER_ANDROID",
+        roles=["BUYER"],
+        allowed_apps=["BUYER_ANDROID"],
+    )
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.put(
+                "/api/v1/users/me/buyer-profile",
+                headers={"Authorization": f"Bearer {buyer_token}"},
+                json={"ktp_nfc_id_snapshot": "NFC-NEW-001"},
+            )
+
+            assert res.status_code == 200
+            assert res.json()["ktp_nfc_id_snapshot"] == "NFC-NEW-001"
+
+        async with AsyncSessionLocal() as session:
+            profile = await session.get(BuyerProfile, profile_id)
+            ownership = await session.get(VehicleOwnership, ownership_id)
+            request = await session.get(VehicleOwnershipRequest, request_id)
+
+            assert profile is not None
+            assert profile.ktp_nfc_id_snapshot == "NFC-NEW-001"
+            assert ownership is not None
+            assert ownership.ktp_nfc_id_snapshot == "NFC-NEW-001"
+            assert request is not None
+            assert request.ktp_nfc_id_snapshot == "NFC-NEW-001"
+    finally:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(VehicleOwnershipRequest).where(VehicleOwnershipRequest.id == request_id)
+            )
+            await session.execute(
+                delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id)
+            )
+            await session.execute(delete(BuyerProfile).where(BuyerProfile.id == profile_id))
+            await session.execute(delete(User).where(User.id == buyer_id))
+            await session.execute(delete(KK).where(KK.id == kk_id))
             await session.commit()

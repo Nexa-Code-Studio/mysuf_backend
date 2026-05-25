@@ -51,7 +51,7 @@ class BuyerProfile(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     nik_snapshot = Column(String, nullable=False)
-    ktp_nfc_id_snapshot = Column(String, nullable=False)
+    ktp_nfc_id_snapshot = Column(String, nullable=False, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True, nullable=False)

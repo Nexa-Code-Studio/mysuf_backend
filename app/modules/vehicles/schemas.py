@@ -102,6 +102,40 @@ class BuyerVehicleListResponse(BaseModel):
     items: List[BuyerVehicleListItemResponse]
 
 
+class CashierBuyerByNfcBuyerResponse(BaseModel):
+    buyer_profile_id: UUID
+    user_id: UUID
+    name: str
+    nik_snapshot: str
+    verification_status: str
+    risk_score: float
+    is_pin_active: bool = False
+
+
+class CashierBuyerByNfcVehicleResponse(BaseModel):
+    ownership_id: UUID
+    vehicle_id: UUID
+    plate_number: str
+    registration_number: str | None = None
+    type_label: str
+    category: str
+    ownership_status: VehicleOwnershipStatus
+    usage_type: VehicleUsageType
+    brand: str | None = None
+    vehicle_type: str | None = None
+    color: str | None = None
+    manufacture_year: int | None = None
+    is_eligible: Optional[bool] = None
+    quota_liters: Optional[float] = None
+    used_liters: Optional[float] = None
+    remaining_liters: Optional[float] = None
+
+
+class CashierBuyerByNfcResponse(BaseModel):
+    buyer: CashierBuyerByNfcBuyerResponse
+    vehicles: List[CashierBuyerByNfcVehicleResponse]
+
+
 class BuyerVehicleDetailResponse(BaseModel):
     ownership_id: UUID
     vehicle_id: UUID

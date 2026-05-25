@@ -8,6 +8,7 @@ from app.modules.users.schemas import (
     UserCreate, UserUpdate, UserResponse, UserListResponse,
     BuyerProfileCreate, BuyerProfileUpdate, BuyerProfileResponse, BuyerProfileCheckResponse,
     UserProfileResponse, BuyerHomeResponse, BuyerQuotaResponse, UserPinUpdate, UserDeviceTokenUpdate,
+    HomeNearbyGasStationsResponse,
 )
 from app.modules.users.service import UserService
 
@@ -124,6 +125,22 @@ async def read_buyer_home(
         user_id=str(current_user.id),
         latitude=latitude,
         longitude=longitude,
+    )
+
+
+@router.get("/me/nearby-gas-stations", response_model=HomeNearbyGasStationsResponse)
+async def read_nearby_gas_stations(
+    latitude: float | None = Query(None),
+    longitude: float | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_roles([UserRole.BUYER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    service = UserService(db)
+    return await service.get_nearby_gas_stations(
+        latitude=latitude,
+        longitude=longitude,
+        limit=limit,
     )
 
 

@@ -34,3 +34,7 @@ class LoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
     client_type: str
+
+
+class LogoutResponse(BaseModel):
+    message: str

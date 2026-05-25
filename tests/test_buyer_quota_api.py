@@ -10,7 +10,13 @@ from app.core.database import AsyncSessionLocal
 from app.core.security import create_access_token, get_password_hash
 from app.main import app
 from app.modules.registries.models import KK, VehicleRegistryMockup
-from app.modules.subsidies.models import SubsidyOwnerType, SubsidyQuota, SubsidyPolicy
+from app.modules.subsidies.models import (
+    EligibilityStatus,
+    KKSubsidyEligibility,
+    SubsidyOwnerType,
+    SubsidyPolicy,
+    SubsidyQuota,
+)
 from app.modules.users.models import BuyerProfile, User, UserRole, VerificationStatus
 from app.modules.vehicles.models import (
     VehicleOwnership,
@@ -242,10 +248,11 @@ async def test_get_buyer_quota_detail_api():
 
             # Verify subsidized fuels
             sub_fuels = data["subsidized_fuels"]
-            assert len(sub_fuels) == 1
-            assert sub_fuels[0]["name"] == "Pertalite"
-            assert sub_fuels[0]["price_per_liter"] == 10000.0
-            assert sub_fuels[0]["subsidy_price_per_liter"] == 6500.0
+            pertalite = next((item for item in sub_fuels if item["id"] == str(subsidized_fuel_id)), None)
+            assert pertalite is not None
+            assert pertalite["name"] == "Pertalite"
+            assert pertalite["price_per_liter"] == 10000.0
+            assert pertalite["subsidy_price_per_liter"] == 6500.0
 
             # Verify vehicle and aggregated completed liters
             vehicles = data["vehicles"]
@@ -273,6 +280,161 @@ async def test_get_buyer_quota_detail_api():
                 await session.execute(delete(FuelType).where(FuelType.id == unsubsidized_fuel_id))
             if gas_station_id:
                 await session.execute(delete(GasStation).where(GasStation.id == gas_station_id))
+            if policy_id:
+                await session.execute(delete(SubsidyPolicy).where(SubsidyPolicy.id == policy_id))
+            if buyer_profile_id:
+                await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
+            if user_id:
+                await session.execute(delete(User).where(User.id == user_id))
+            if kk_id:
+                await session.execute(delete(KK).where(KK.id == kk_id))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_ineligible_buyer_quota_is_hidden_from_home_and_quota_api():
+    now = datetime.utcnow()
+    kk = KK(code=f"KK-NONELIG-{uuid4().hex[:8]}")
+    user = User(
+        name="Jane Doe",
+        email=f"jane-quota-{uuid4().hex[:8]}@example.com",
+        password=get_password_hash("secret123"),
+        role=[UserRole.BUYER],
+        is_active=True,
+    )
+    buyer_profile = BuyerProfile(
+        nik_snapshot=f"3172{uuid4().hex[:12]}",
+        ktp_nfc_id_snapshot=f"NFC-{uuid4().hex[:8]}",
+        kk=kk,
+        user=user,
+        verification_status=VerificationStatus.VERIFIED,
+        risk_score=Decimal("10.00"),
+    )
+    registry_vehicle = VehicleRegistryMockup(
+        plate_number="B 9999 NEL",
+        registration_number=f"STNK-NEL-{uuid4().hex[:8]}",
+        brand="Toyota",
+        vehicle_type="Fortuner",
+        manufacture_year=2024,
+        color="Hitam",
+        engine_capacity_cc=2755,
+        pkb="8500000.00",
+        njkb="650000000.00",
+        owner_name="Jane Doe",
+        owner_nik=buyer_profile.nik_snapshot,
+    )
+
+    kk_id = None
+    user_id = None
+    buyer_profile_id = None
+    policy_id = None
+    vehicle_registry_id = None
+    ownership_id = None
+    quota_id = None
+    eligibility_id = None
+
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select
+
+            policy_result = await session.execute(
+                select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
+            )
+            policy = policy_result.scalars().first()
+            created_policy = False
+            if not policy:
+                policy = SubsidyPolicy(
+                    name="Personal Fuel Subsidy Policy",
+                    usage_type=VehicleUsageType.PERSONAL,
+                    monthly_quota_liters=Decimal("200.00"),
+                    max_allowed_njkb=Decimal("300000000.00"),
+                    is_active=True,
+                )
+                session.add(policy)
+                await session.flush()
+                created_policy = True
+
+            session.add_all([kk, user, buyer_profile, registry_vehicle])
+            await session.commit()
+
+            await session.refresh(kk)
+            await session.refresh(user)
+            await session.refresh(buyer_profile)
+            await session.refresh(registry_vehicle)
+
+            kk_id = kk.id
+            user_id = user.id
+            buyer_profile_id = buyer_profile.id
+            policy_id = policy.id if created_policy else None
+            vehicle_registry_id = registry_vehicle.id
+
+            ownership = VehicleOwnership(
+                owner_type=VehicleOwnerType.BUYER_PROFILE,
+                owner_id=buyer_profile.id,
+                vehicle_id=registry_vehicle.id,
+                ownership_status=VehicleOwnershipStatus.PERSONAL,
+                usage_type=VehicleUsageType.PERSONAL,
+                quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
+                plate_number_snapshot=registry_vehicle.plate_number,
+                ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
+            )
+            quota = SubsidyQuota(
+                owner_type=SubsidyOwnerType.BUYER_PROFILE,
+                owner_id=buyer_profile.id,
+                subsidy_policy_id=policy.id,
+                month=now.month,
+                year=now.year,
+                quota_liters=Decimal("180.00"),
+                used_liters=Decimal("20.00"),
+                is_active=True,
+            )
+            eligibility = KKSubsidyEligibility(
+                kk_id=buyer_profile.kk_id,
+                subsidy_policy_id=policy.id,
+                total_njkb=Decimal("650000000.00"),
+                eligibility_status=EligibilityStatus.NOT_ELIGIBLE,
+                eligibility_reason="Total NJKB kendaraan unik dalam KK melebihi batas.",
+                checked_at=now,
+            )
+            session.add_all([ownership, quota, eligibility])
+            await session.commit()
+
+            await session.refresh(ownership)
+            await session.refresh(quota)
+            await session.refresh(eligibility)
+            ownership_id = ownership.id
+            quota_id = quota.id
+            eligibility_id = eligibility.id
+
+        token = _build_buyer_token(str(user_id))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            quota_res = await ac.get(
+                "/api/v1/users/me/quota",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert quota_res.status_code == 200
+            quota_data = quota_res.json()
+            assert quota_data["personal_quota"] is None
+            assert len(quota_data["vehicles"]) == 1
+
+            home_res = await ac.get(
+                "/api/v1/users/me/home",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert home_res.status_code == 200
+            home_data = home_res.json()
+            assert home_data["personal_quota"] is None
+            assert home_data["vehicle_verification"]["has_verified_vehicle"] is True
+    finally:
+        async with AsyncSessionLocal() as session:
+            if ownership_id:
+                await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id))
+            if quota_id:
+                await session.execute(delete(SubsidyQuota).where(SubsidyQuota.id == quota_id))
+            if eligibility_id:
+                await session.execute(delete(KKSubsidyEligibility).where(KKSubsidyEligibility.id == eligibility_id))
+            if vehicle_registry_id:
+                await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == vehicle_registry_id))
             if policy_id:
                 await session.execute(delete(SubsidyPolicy).where(SubsidyPolicy.id == policy_id))
             if buyer_profile_id:

@@ -9,7 +9,12 @@ from app.modules.gas_stations.models import GasStation
 from app.modules.subsidies.models import SubsidyOwnerType, SubsidyQuota
 from app.modules.transactions.models import FuelTransaction, WalletTransaction
 from app.modules.users.models import BuyerProfile, User
-from app.modules.vehicles.models import VehicleOwnership, VehicleUsageType
+from app.modules.vehicles.models import (
+    VehicleOwnerType,
+    VehicleOwnership,
+    VehicleOwnershipRequest,
+    VehicleUsageType,
+)
 from app.modules.wallets.models import OwnerType, Wallet
 
 class UserRepository:
@@ -62,11 +67,42 @@ class UserRepository:
         result = await self.db.execute(select(BuyerProfile).filter(BuyerProfile.user_id == user_id))
         return result.scalars().first()
 
+    async def get_buyer_profile_by_ktp_nfc_id_snapshot(self, ktp_nfc_id_snapshot: str) -> Optional[BuyerProfile]:
+        result = await self.db.execute(
+            select(BuyerProfile).filter(BuyerProfile.ktp_nfc_id_snapshot == ktp_nfc_id_snapshot)
+        )
+        return result.scalars().first()
+
     async def get_vehicle_ownerships_by_ktp_nfc_id_snapshot(self, ktp_nfc_id_snapshot: str) -> list[VehicleOwnership]:
         result = await self.db.execute(
             select(VehicleOwnership)
             .filter(VehicleOwnership.ktp_nfc_id_snapshot == ktp_nfc_id_snapshot)
             .order_by(VehicleOwnership.created_at.desc(), VehicleOwnership.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_vehicle_ownerships_by_buyer_profile_id(
+        self,
+        buyer_profile_id,
+    ) -> list[VehicleOwnership]:
+        result = await self.db.execute(
+            select(VehicleOwnership)
+            .filter(
+                VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
+                VehicleOwnership.owner_id == buyer_profile_id,
+            )
+            .order_by(VehicleOwnership.created_at.desc(), VehicleOwnership.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_vehicle_ownership_requests_by_buyer_profile_id(
+        self,
+        buyer_profile_id,
+    ) -> list[VehicleOwnershipRequest]:
+        result = await self.db.execute(
+            select(VehicleOwnershipRequest)
+            .filter(VehicleOwnershipRequest.buyer_profile_id == buyer_profile_id)
+            .order_by(VehicleOwnershipRequest.submitted_at.desc(), VehicleOwnershipRequest.id.desc())
         )
         return list(result.scalars().all())
 
