@@ -12,17 +12,20 @@ dependencies = [
     "alembic>=1.13.1",
     "pydantic>=2.5.3",
     "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.1",
+    "email-validator>=2.1.0",
     "bcrypt>=4.1.0",
     "python-jose[cryptography]>=3.3.0",
     "python-multipart>=0.0.6",
+    "httpx>=0.26.0",
     "firebase-admin>=6.5.0",
+    "uuid7>=0.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.5",
-    "httpx>=0.26.0",
 ]
 identity = [
     "opencv-python-headless>=4.10.0",

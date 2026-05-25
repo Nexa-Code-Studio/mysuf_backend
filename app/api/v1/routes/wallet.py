@@ -14,6 +14,14 @@ from app.modules.transactions.schemas import (
     PaginatedWalletTransactionsResponse,
     SearchRecipientResponse,
     TransferRequest,
+    FuelPurchaseRequest,
+    FuelPurchaseResponse,
+    QrisFuelPurchaseRequest,
+    QrisFuelPurchaseResponse,
+    QrisFuelPurchaseStatusResponse,
+    XenditFuelPurchaseRequest,
+    XenditFuelPurchaseResponse,
+    XenditFuelPurchaseStatusResponse,
 )
 from app.modules.transactions.service import TransactionService
 
@@ -125,3 +133,70 @@ async def execute_transfer(
     service = TransactionService(db)
     return await service.execute_wallet_transfer(current_user.id, request)
 
+
+@router.post("/fuel-purchase", response_model=FuelPurchaseResponse)
+async def execute_fuel_purchase(
+    request: FuelPurchaseRequest,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Submit a fuel purchase transaction using KTP E-Wallet.
+    Performs real-time fraud checks and processes transaction atomically.
+    """
+    service = TransactionService(db)
+    return await service.execute_fuel_purchase(current_user, request)
+
+
+@router.post("/fuel-purchase/qris", response_model=QrisFuelPurchaseResponse)
+async def create_qris_fuel_purchase(
+    request: QrisFuelPurchaseRequest,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Create a QRIS fuel purchase and return a QR string for the cashier app.
+    Uses polling to synchronize payment status from Xendit.
+    """
+    service = TransactionService(db)
+    return await service.create_qris_fuel_purchase(current_user, request)
+
+
+@router.get("/fuel-purchase/qris/{transaction_id}", response_model=QrisFuelPurchaseStatusResponse)
+async def get_qris_fuel_purchase_status(
+    transaction_id: UUID,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Poll QRIS fuel purchase status and synchronize it with Xendit.
+    """
+    service = TransactionService(db)
+    return await service.get_qris_fuel_purchase_status(current_user, transaction_id)
+
+
+@router.post("/fuel-purchase/xendit", response_model=XenditFuelPurchaseResponse)
+async def create_xendit_fuel_purchase(
+    request: XenditFuelPurchaseRequest,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Create a non-cash Xendit payment session for a fuel purchase.
+    Uses the same create-session and polling pattern as wallet top up.
+    """
+    service = TransactionService(db)
+    return await service.create_xendit_fuel_purchase(current_user, request)
+
+
+@router.get("/fuel-purchase/xendit/{transaction_id}", response_model=XenditFuelPurchaseStatusResponse)
+async def get_xendit_fuel_purchase_status(
+    transaction_id: UUID,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """
+    Poll a non-cash Xendit fuel purchase and synchronize it with Xendit.
+    """
+    service = TransactionService(db)
+    return await service.get_xendit_fuel_purchase_status(current_user, transaction_id)

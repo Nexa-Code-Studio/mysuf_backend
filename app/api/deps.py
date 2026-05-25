@@ -1,7 +1,7 @@
-from typing import Generator, List
-from fastapi import Depends, HTTPException, status
+from typing import List
+
+from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -14,23 +14,27 @@ async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session
 
-from app.core.security import ALGORITHM
 from app.modules.users.models import User, UserRole
 from app.modules.auth.utils import has_any_role
 from app.core.exceptions import CredentialsException, ForbiddenException
+from app.modules.auth.service import AuthService
 
 async def get_current_user_with_payload(
     db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
 ) -> tuple[User, dict]:
-    try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[ALGORITHM]
-        )
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise CredentialsException(detail="Could not validate credentials")
-    except JWTError:
+    auth_service = AuthService(db)
+    payload = auth_service.decode_token(token)
+    user_id: str = payload.get("sub")
+    if user_id is None:
         raise CredentialsException(detail="Could not validate credentials")
+    session_id = payload.get("session_id")
+    client_type = payload.get("client_type")
+    if session_id:
+        await auth_service.ensure_session_is_active(
+            session_id,
+            user_id=user_id,
+            client_type=client_type,
+        )
     
     from sqlalchemy.orm import selectinload
     result = await db.execute(
@@ -45,9 +49,6 @@ async def get_current_user_with_payload(
         
     return user, payload
 
-from fastapi.security import OAuth2PasswordBearer
-from fastapi import Request
-
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
 
 async def get_optional_current_user_with_payload(
@@ -55,14 +56,21 @@ async def get_optional_current_user_with_payload(
 ) -> tuple[User, dict] | None:
     if not token:
         return None
+    auth_service = AuthService(db)
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[ALGORITHM]
-        )
+        payload = auth_service.decode_token(token)
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
-    except JWTError:
+        session_id = payload.get("session_id")
+        client_type = payload.get("client_type")
+        if session_id:
+            await auth_service.ensure_session_is_active(
+                session_id,
+                user_id=user_id,
+                client_type=client_type,
+            )
+    except CredentialsException:
         return None
     
     from sqlalchemy.orm import selectinload

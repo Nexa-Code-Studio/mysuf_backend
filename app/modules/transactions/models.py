@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Column, String, DateTime, Enum, Numeric, Boolean, ForeignKey
+from sqlalchemy import Column, String, DateTime, Enum, Numeric, Boolean, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -45,6 +45,7 @@ class PaymentMethod(str, enum.Enum):
     CASH = "CASH"
     EDC = "EDC"
     QRIS = "QRIS"
+    XENDIT = "XENDIT"
 
 class FuelTransactionStatus(str, enum.Enum):
     PENDING = "PENDING"
@@ -52,16 +53,30 @@ class FuelTransactionStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
     FAILED = "FAILED"
 
+
+class CashierScanMethod(str, enum.Enum):
+    NFC = "NFC"
+    NIK = "NIK"
+    QR = "QR"
+
+
+class CashierScanResult(str, enum.Enum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
 class PaymentTransaction(Base):
     __tablename__ = "payment_transactions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
     wallet_id = Column(UUID(as_uuid=True), ForeignKey("wallets.id"), nullable=False)
+    fuel_transaction_id = Column(UUID(as_uuid=True), ForeignKey("fuel_transactions.id"), nullable=True)
 
     provider = Column(Enum(PaymentProvider, name="payment_provider_enum"), nullable=False)
     external_id = Column(String, nullable=False)
     provider_reference_id = Column(String, nullable=True)
     payment_link_url = Column(String, nullable=True)
+    qr_string = Column(String, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
 
     amount = Column(Numeric(18, 2), nullable=False)
     status = Column(Enum(PaymentStatus, name="payment_status_enum"), nullable=False)
@@ -72,6 +87,7 @@ class PaymentTransaction(Base):
     # Relationships
     wallet = relationship("Wallet", back_populates="payment_transactions")
     wallet_transactions = relationship("WalletTransaction", back_populates="payment_transaction")
+    fuel_transaction = relationship("FuelTransaction", back_populates="payment_transactions")
 
 class WalletTransaction(Base):
     __tablename__ = "wallet_transactions"
@@ -150,6 +166,33 @@ class FuelTransaction(Base):
     subsidy_quota = relationship("SubsidyQuota", back_populates="fuel_transactions")
     kk_subsidy_eligibility = relationship("KKSubsidyEligibility", back_populates="fuel_transactions")
     wallet_transaction = relationship("WalletTransaction", back_populates="fuel_transactions")
+    payment_transactions = relationship("PaymentTransaction", back_populates="fuel_transaction")
+
+
+class CashierScanEvent(Base):
+    __tablename__ = "cashier_scan_events"
+    __table_args__ = (
+        Index("ix_cashier_scan_events_cashier_created_at", "cashier_user_id", "created_at", "id"),
+        Index("ix_cashier_scan_events_gas_station_created_at", "gas_station_id", "created_at", "id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    cashier_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    gas_station_id = Column(UUID(as_uuid=True), ForeignKey("gas_stations.id"), nullable=True)
+    lookup_method = Column(Enum(CashierScanMethod, name="cashier_scan_method_enum"), nullable=False)
+    lookup_value = Column(String, nullable=False)
+    result = Column(Enum(CashierScanResult, name="cashier_scan_result_enum"), nullable=False)
+    buyer_profile_id = Column(UUID(as_uuid=True), ForeignKey("buyer_profiles.id"), nullable=True)
+    vehicle_ownership_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_ownerships.id"), nullable=True)
+    fuel_transaction_id = Column(UUID(as_uuid=True), ForeignKey("fuel_transactions.id"), nullable=True)
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    cashier_user = relationship("User")
+    gas_station = relationship("GasStation")
+    buyer_profile = relationship("BuyerProfile")
+    vehicle_ownership = relationship("VehicleOwnership")
+    fuel_transaction = relationship("FuelTransaction")
 
 
 class WebhookAuditLog(Base):

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash
 from app.modules.subsidies.service import SubsidyService
+from app.modules.subsidies.models import EligibilityStatus
 from app.modules.transactions.models import FuelTransaction, TransactionFlow, TransactionType, WalletTransaction
 from app.modules.users.schemas import UserCreate, UserUpdate, BuyerProfileCreate, BuyerProfileUpdate
 from app.modules.users.models import User, UserRole, BuyerProfile, VerificationStatus
@@ -186,8 +187,39 @@ class UserService:
                 )
 
         update_data = profile_in.model_dump(exclude_unset=True)
+        next_nfc_snapshot = update_data.get("ktp_nfc_id_snapshot")
+        if next_nfc_snapshot is not None:
+            next_nfc_snapshot = next_nfc_snapshot.strip()
+            if not next_nfc_snapshot:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="NFC E-KTP tidak boleh kosong.",
+                )
+            if next_nfc_snapshot == profile.ktp_nfc_id_snapshot:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="NFC yang dipindai sama dengan NFC saat ini.",
+                )
+
+            existing_profile = await self.repo.get_buyer_profile_by_ktp_nfc_id_snapshot(next_nfc_snapshot)
+            if existing_profile and existing_profile.id != profile.id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="NFC E-KTP tersebut sudah digunakan oleh pengguna lain.",
+                )
+            update_data["ktp_nfc_id_snapshot"] = next_nfc_snapshot
+
         for field, value in update_data.items():
             setattr(profile, field, value)
+
+        if next_nfc_snapshot is not None:
+            ownerships = await self.repo.get_vehicle_ownerships_by_buyer_profile_id(profile.id)
+            for ownership in ownerships:
+                ownership.ktp_nfc_id_snapshot = next_nfc_snapshot
+
+            requests = await self.repo.get_vehicle_ownership_requests_by_buyer_profile_id(profile.id)
+            for request in requests:
+                request.ktp_nfc_id_snapshot = next_nfc_snapshot
 
         return await self.repo.update_buyer_profile(profile)
 
@@ -229,14 +261,11 @@ class UserService:
         )
 
         current_time = datetime.utcnow()
-        personal_quota = await self.subsidy_service.get_or_sync_personal_quota(
+        personal_quota = await self._build_personal_quota_payload(
             buyer_profile=buyer_profile,
             month=current_time.month,
             year=current_time.year,
         )
-        quota_liters = float(Decimal(personal_quota.quota_liters))
-        used_liters = float(Decimal(personal_quota.used_liters))
-        remaining_liters = max(quota_liters - used_liters, 0.0)
 
         recent_transactions = await self._build_recent_transactions(buyer_profile)
 
@@ -246,13 +275,7 @@ class UserService:
                 "show_verify_vehicle_cta": not has_verified_vehicle,
                 "cta_route": "/vehicles/add",
             },
-            "personal_quota": {
-                "month": current_time.month,
-                "year": current_time.year,
-                "quota_liters": quota_liters,
-                "used_liters": used_liters,
-                "remaining_liters": remaining_liters,
-            },
+            "personal_quota": personal_quota,
             "nearby_gas_stations": self._build_nearby_gas_stations(latitude, longitude),
             "recent_transactions": recent_transactions,
             "risk_status": {
@@ -260,7 +283,40 @@ class UserService:
                 "risk_score": float(Decimal(buyer_profile.risk_score)),
             },
         }
-        return await self.populate_nearby_gas_stations(payload, latitude, longitude)
+        payload["nearby_gas_stations"] = await self.get_nearby_gas_stations(
+            latitude=latitude,
+            longitude=longitude,
+            limit=3,
+        )
+        return payload
+
+    async def get_nearby_gas_stations(
+        self,
+        latitude: float | None,
+        longitude: float | None,
+        limit: int = 10,
+    ) -> dict:
+        payload = self._build_nearby_gas_stations(latitude, longitude)
+        if latitude is None or longitude is None:
+            return payload
+
+        gas_stations = await self.repo.list_gas_stations()
+        items = []
+        for gas_station in gas_stations:
+            distance_km = self._calculate_distance_km(latitude, longitude, gas_station.latitude, gas_station.longitude)
+            items.append(
+                {
+                    "id": gas_station.id,
+                    "name": gas_station.name,
+                    "latitude": float(gas_station.latitude),
+                    "longitude": float(gas_station.longitude),
+                    "distance_km": round(distance_km, 2),
+                }
+            )
+
+        items.sort(key=lambda item: item["distance_km"])
+        payload["items"] = items[:limit]
+        return payload
 
     async def _build_recent_transactions(self, buyer_profile: BuyerProfile) -> list[dict]:
         wallet = await self.repo.get_wallet_by_owner_user_id(str(buyer_profile.user_id))
@@ -348,27 +404,6 @@ class UserService:
             "items": [],
         }
 
-    async def populate_nearby_gas_stations(self, home_payload: dict, latitude: float | None, longitude: float | None) -> dict:
-        if latitude is None or longitude is None:
-            return home_payload
-
-        gas_stations = await self.repo.list_gas_stations()
-        items = []
-        for gas_station in gas_stations:
-            distance_km = self._calculate_distance_km(latitude, longitude, gas_station.latitude, gas_station.longitude)
-            items.append(
-                {
-                    "id": gas_station.id,
-                    "name": gas_station.name,
-                    "latitude": float(gas_station.latitude),
-                    "longitude": float(gas_station.longitude),
-                    "distance_km": round(distance_km, 2),
-                }
-            )
-        items.sort(key=lambda item: item["distance_km"])
-        home_payload["nearby_gas_stations"]["items"] = items[:3]
-        return home_payload
-
     def _format_home_datetime(self, value: datetime) -> str:
         month_names = [
             "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
@@ -391,6 +426,44 @@ class UserService:
         )
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         return earth_radius_km * c
+
+    async def _get_latest_personal_eligibility(self, buyer_profile: BuyerProfile):
+        policy = await self.subsidy_service.repo.get_subsidy_policy_by_usage_type(
+            VehicleUsageType.PERSONAL
+        )
+        if policy is None:
+            return None
+
+        return await self.subsidy_service.repo.get_latest_kk_subsidy_eligibility(
+            kk_id=buyer_profile.kk_id,
+            subsidy_policy_id=policy.id,
+        )
+
+    async def _build_personal_quota_payload(
+        self,
+        buyer_profile: BuyerProfile,
+        month: int,
+        year: int,
+    ) -> dict[str, float | int] | None:
+        latest_eligibility = await self._get_latest_personal_eligibility(buyer_profile)
+        if latest_eligibility is not None and latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
+            return None
+
+        quota = await self.subsidy_service.get_or_sync_personal_quota(
+            buyer_profile=buyer_profile,
+            month=month,
+            year=year,
+        )
+        quota_liters = float(Decimal(quota.quota_liters))
+        used_liters = float(Decimal(quota.used_liters))
+        remaining_liters = max(quota_liters - used_liters, 0.0)
+        return {
+            "month": month,
+            "year": year,
+            "quota_liters": quota_liters,
+            "used_liters": used_liters,
+            "remaining_liters": remaining_liters,
+        }
 
     async def get_user_profile_detail(self, user_id: str) -> dict:
         from sqlalchemy import select, func
@@ -482,11 +555,17 @@ class UserService:
                 )
             )
             quota = quota_result.scalars().first()
-            if quota:
+            if quota and is_eligible:
+                quota_remaining = int(quota.quota_liters - quota.used_liters)
+            elif is_eligible:
+                quota = await self.subsidy_service.get_or_sync_personal_quota(
+                    buyer_profile=buyer_profile,
+                    month=now.month,
+                    year=now.year,
+                )
                 quota_remaining = int(quota.quota_liters - quota.used_liters)
             else:
-                # Fallback to a default like 150
-                quota_remaining = 150
+                quota_remaining = 0
 
         return {
             "name": user.name,
@@ -509,14 +588,11 @@ class UserService:
             )
 
         current_time = datetime.utcnow()
-        personal_quota = await self.subsidy_service.get_or_sync_personal_quota(
+        personal_quota = await self._build_personal_quota_payload(
             buyer_profile=buyer_profile,
             month=current_time.month,
             year=current_time.year,
         )
-        quota_liters = float(Decimal(personal_quota.quota_liters))
-        used_liters = float(Decimal(personal_quota.used_liters))
-        remaining_liters = max(quota_liters - used_liters, 0.0)
 
         # Local imports to prevent circular references
         from app.modules.fuels.models import FuelType, SubsidyType
@@ -568,13 +644,7 @@ class UserService:
             })
 
         return {
-            "personal_quota": {
-                "month": current_time.month,
-                "year": current_time.year,
-                "quota_liters": quota_liters,
-                "used_liters": used_liters,
-                "remaining_liters": remaining_liters,
-                },
+            "personal_quota": personal_quota,
             "subsidized_fuels": subsidized_fuels,
             "vehicles": vehicles_list
         }
@@ -627,5 +697,3 @@ class UserService:
         await self.repo.db.commit()
         await self.repo.db.refresh(user)
         return {"message": "Token perangkat berhasil didaftarkan."}
-
-

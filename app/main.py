@@ -5,15 +5,10 @@ from fastapi.routing import APIRoute
 
 from app.core.config import settings
 from app.api.v1.router import api_router
-from app.modules.buyer_registrations.model_store import close_model_store, initialize_model_store
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await initialize_model_store()
-    try:
-        yield
-    finally:
-        await close_model_store()
+    yield
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:

@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.subsidies.models import SubsidyPolicy, SubsidyQuota, SubsidyOwnerType
+from app.modules.subsidies.models import KKSubsidyEligibility, SubsidyPolicy, SubsidyQuota, SubsidyOwnerType
 from app.modules.vehicles.models import VehicleUsageType
 
 
@@ -50,6 +50,26 @@ class SubsidyRepository:
                 SubsidyQuota.month == month,
                 SubsidyQuota.year == year,
             )
+        )
+        return result.scalars().first()
+
+    async def get_latest_kk_subsidy_eligibility(
+        self,
+        kk_id: str | UUID,
+        subsidy_policy_id: str | UUID,
+    ) -> KKSubsidyEligibility | None:
+        result = await self.db.execute(
+            select(KKSubsidyEligibility)
+            .filter(
+                KKSubsidyEligibility.kk_id == kk_id,
+                KKSubsidyEligibility.subsidy_policy_id == subsidy_policy_id,
+            )
+            .order_by(
+                KKSubsidyEligibility.checked_at.desc().nullslast(),
+                KKSubsidyEligibility.updated_at.desc(),
+                KKSubsidyEligibility.id.desc(),
+            )
+            .limit(1)
         )
         return result.scalars().first()
 

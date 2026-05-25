@@ -17,7 +17,7 @@ DEFAULT_REGISTRY_SEED_DATA = {
         {"code": "KK-320101-0005"},
     ],
     "citizens": [
-        {"nik": "3511111411040003", "nama": "EKYA MUHAMMAD HASFI FADLILURRAHMAN", "ktp_nfc_id": "NFC-351111-0003", "kk_code": "KK-320101-0001"},
+        {"nik": "3511111411040003", "nama": "EKYA MUHAMMAD HASFI FADLILURRAHMAN", "ktp_nfc_id": "04290CEA936C80", "kk_code": "KK-320101-0001"},
         {"nik": "3201010101010001", "nama": "Ahmad Sulaiman", "ktp_nfc_id": "NFC-320101-0001", "kk_code": "KK-320101-0001"},
         {"nik": "3201010101010002", "nama": "Siti Rahmawati", "ktp_nfc_id": "NFC-320101-0002", "kk_code": "KK-320101-0001"},
         {"nik": "3201010101010003", "nama": "Budi Hartono", "ktp_nfc_id": "NFC-320101-0003", "kk_code": "KK-320101-0002"},
@@ -42,6 +42,7 @@ DEFAULT_REGISTRY_SEED_DATA = {
         {"plate_number": "B 5235 KKE", "registration_number": "STNK-320101-0010", "brand": "Honda", "vehicle_type": "Brio", "manufacture_year": 2022, "color": "Kuning", "engine_capacity_cc": 1199, "pkb": Decimal("1950000.00"), "njkb": Decimal("182000000.00"), "owner_name": "Intan Permatasari", "owner_nik": "3201010101010010"},
         {"plate_number": "B 6234 KKF", "registration_number": "STNK-320101-0011", "brand": "Suzuki", "vehicle_type": "Carry", "manufacture_year": 2017, "color": "Hitam", "engine_capacity_cc": 1493, "pkb": Decimal("1450000.00"), "njkb": Decimal("98000000.00"), "owner_name": "Ahmad Sulaiman", "owner_nik": "3201010101010001"},
         {"plate_number": "B 6235 KKF", "registration_number": "STNK-320101-0012", "brand": "Mitsubishi", "vehicle_type": "Pajero Sport", "manufacture_year": 2021, "color": "Putih", "engine_capacity_cc": 2442, "pkb": Decimal("5250000.00"), "njkb": Decimal("498000000.00"), "owner_name": "Budi Hartono", "owner_nik": "3201010101010003"},
+        {"plate_number": "B 3511 EKY", "registration_number": "STNK-351111-0001", "brand": "Toyota", "vehicle_type": "Innova", "manufacture_year": 2022, "color": "Hitam", "engine_capacity_cc": 1998, "pkb": Decimal("3800000.00"), "njkb": Decimal("320000000.00"), "owner_name": "EKYA MUHAMMAD HASFI FADLILURRAHMAN", "owner_nik": "3511111411040003"},
     ],
 }
 
