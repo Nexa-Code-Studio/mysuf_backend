@@ -10,7 +10,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.database import AsyncSessionLocal
-from sqlalchemy import text
 from app.modules.registries.seed_data import seed_registry_mockups
 from app.modules.gas_stations.seed_data import seed_gas_stations
 from app.modules.fuels.seed_data import seed_fuel_types
@@ -20,54 +19,6 @@ from app.modules.users.seed_data import seed_users, seed_buyer_user
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-async def _ensure_vehicle_usage_enum_compatibility(session) -> None:
-    enum_res = await session.execute(
-        text("SELECT enumlabel FROM pg_enum WHERE enumtypid = 'vehicle_usage_type_enum'::regtype")
-    )
-    existing_labels = {row[0] for row in enum_res.fetchall()}
-
-    if "COMMERCIAL_MOTORCYCLE" not in existing_labels:
-        if "OJOL" in existing_labels:
-            await session.execute(
-                text("ALTER TYPE vehicle_usage_type_enum RENAME VALUE 'OJOL' TO 'COMMERCIAL_MOTORCYCLE'")
-            )
-        else:
-            await session.execute(text("ALTER TYPE vehicle_usage_type_enum ADD VALUE 'COMMERCIAL_MOTORCYCLE'"))
-
-    for label in ("COMMERCIAL_CAR", "COMMERCIAL_TRUCK"):
-        if label not in existing_labels:
-            await session.execute(text(f"ALTER TYPE vehicle_usage_type_enum ADD VALUE '{label}'"))
-
-    await session.execute(
-        text(
-            """
-            UPDATE subsidy_policies
-            SET usage_type = 'COMMERCIAL_MOTORCYCLE'
-            WHERE usage_type = 'OJOL'
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
-            UPDATE vehicle_ownerships
-            SET usage_type = 'COMMERCIAL_MOTORCYCLE'
-            WHERE usage_type = 'OJOL'
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
-            UPDATE vehicle_ownership_requests
-            SET usage_type = 'COMMERCIAL_MOTORCYCLE'
-            WHERE usage_type = 'OJOL'
-            """
-        )
-    )
-
-    await session.commit()
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Seed all MySuf backend master data.")
@@ -87,7 +38,6 @@ async def main(month: int | None = None, year: int | None = None) -> None:
     logger.info("==================================================")
 
     async with AsyncSessionLocal() as session:
-        await _ensure_vehicle_usage_enum_compatibility(session)
         # 1. Government Registries Mockup (KK, Citizen, Vehicle)
         logger.info("1/7 Seeding Government Registry Mockups...")
         reg_summary = await seed_registry_mockups(session)
