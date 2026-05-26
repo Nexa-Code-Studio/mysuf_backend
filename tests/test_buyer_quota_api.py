@@ -292,6 +292,190 @@ async def test_get_buyer_quota_detail_api():
 
 
 @pytest.mark.anyio
+async def test_get_buyer_home_with_company_operational_vehicle():
+    now = datetime.utcnow()
+    kk = KK(code=f"KK-HOME-{uuid4().hex[:8]}")
+    user = User(
+        name="Jane Doe",
+        email=f"jane-home-{uuid4().hex[:8]}@example.com",
+        password=get_password_hash("secret123"),
+        role=[UserRole.BUYER],
+        is_active=True,
+    )
+    buyer_profile = BuyerProfile(
+        nik_snapshot=f"3171{uuid4().hex[:12]}",
+        ktp_nfc_id_snapshot=f"NFC-{uuid4().hex[:8]}",
+        kk=kk,
+        user=user,
+        verification_status=VerificationStatus.VERIFIED,
+        risk_score=Decimal("20.00"),
+    )
+    registry_vehicle = VehicleRegistryMockup(
+        plate_number="B 8888 HOM",
+        registration_number=f"STNK-HOM-{uuid4().hex[:8]}",
+        brand="Toyota",
+        vehicle_type="Avanza",
+        manufacture_year=2022,
+        color="Hitam",
+        engine_capacity_cc=1496,
+        pkb="3500000.00",
+        njkb="220000000.00",
+        owner_name="Jane Doe",
+        owner_nik=buyer_profile.nik_snapshot,
+    )
+
+    kk_id = None
+    user_id = None
+    buyer_profile_id = None
+    vehicle_registry_id = None
+    ownership_id = None
+
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add_all([kk, user, buyer_profile, registry_vehicle])
+            await session.commit()
+
+            await session.refresh(kk)
+            await session.refresh(user)
+            await session.refresh(buyer_profile)
+            await session.refresh(registry_vehicle)
+
+            kk_id = kk.id
+            user_id = user.id
+            buyer_profile_id = buyer_profile.id
+            vehicle_registry_id = registry_vehicle.id
+
+            ownership = VehicleOwnership(
+                owner_type=VehicleOwnerType.BUYER_PROFILE,
+                owner_id=buyer_profile.id,
+                vehicle_id=registry_vehicle.id,
+                ownership_status=VehicleOwnershipStatus.COMPANY,
+                usage_type=VehicleUsageType.COMPANY_OPERATIONAL,
+                quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
+                plate_number_snapshot=registry_vehicle.plate_number,
+                ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
+            )
+            session.add(ownership)
+            await session.commit()
+
+            await session.refresh(ownership)
+            ownership_id = ownership.id
+
+        token = _build_buyer_token(str(user_id))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            home_res = await ac.get(
+                "/api/v1/users/me/home",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert home_res.status_code == 200
+            home_data = home_res.json()
+            assert home_data["vehicle_verification"]["has_verified_vehicle"] is False
+            assert home_data["vehicle_verification"]["show_verify_vehicle_cta"] is True
+    finally:
+        async with AsyncSessionLocal() as session:
+            if ownership_id:
+                await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id))
+            if vehicle_registry_id:
+                await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == vehicle_registry_id))
+            if buyer_profile_id:
+                await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
+            if user_id:
+                await session.execute(delete(User).where(User.id == user_id))
+            if kk_id:
+                await session.execute(delete(KK).where(KK.id == kk_id))
+            await session.commit()
+
+
+@pytest.mark.anyio
+async def test_home_hides_personal_quota_when_eligibility_record_is_missing():
+    kk = KK(code=f"KK-QUOTA-MISSING-{uuid4().hex[:8]}")
+    user = User(
+        name="Missing Eligibility Buyer",
+        email=f"missing-eligibility-{uuid4().hex[:8]}@example.com",
+        password=get_password_hash("secret123"),
+        role=[UserRole.BUYER],
+        is_active=True,
+    )
+    buyer_profile = BuyerProfile(
+        nik_snapshot=f"3171{uuid4().hex[:12]}",
+        ktp_nfc_id_snapshot=f"NFC-{uuid4().hex[:8]}",
+        kk=kk,
+        user=user,
+        verification_status=VerificationStatus.VERIFIED,
+        risk_score=Decimal("60.00"),
+    )
+
+    created_policy = False
+    policy_id = None
+    kk_id = None
+    user_id = None
+    buyer_profile_id = None
+
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select
+
+            policy_result = await session.execute(
+                select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
+            )
+            policy = policy_result.scalars().first()
+            if policy is None:
+                policy = SubsidyPolicy(
+                    name="Quota Personal",
+                    usage_type=VehicleUsageType.PERSONAL,
+                    monthly_quota_liters=Decimal("250.00"),
+                    max_allowed_njkb=Decimal("250000000.00"),
+                    is_active=True,
+                )
+                session.add(policy)
+                await session.commit()
+                await session.refresh(policy)
+                created_policy = True
+            policy_id = policy.id
+
+            session.add_all([kk, user, buyer_profile])
+            await session.commit()
+
+            await session.refresh(kk)
+            await session.refresh(user)
+            await session.refresh(buyer_profile)
+
+            kk_id = kk.id
+            user_id = user.id
+            buyer_profile_id = buyer_profile.id
+
+        token = _build_buyer_token(str(user_id))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            home_res = await ac.get(
+                "/api/v1/users/me/home",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert home_res.status_code == 200
+            home_data = home_res.json()
+            assert home_data["personal_quota"] is None
+
+            profile_res = await ac.get(
+                "/api/v1/users/me/profile",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert profile_res.status_code == 200
+            profile_data = profile_res.json()
+            assert profile_data["isEligible"] is False
+            assert profile_data["quotaRemaining"] == 0
+    finally:
+        async with AsyncSessionLocal() as session:
+            if buyer_profile_id:
+                await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
+            if user_id:
+                await session.execute(delete(User).where(User.id == user_id))
+            if kk_id:
+                await session.execute(delete(KK).where(KK.id == kk_id))
+            if created_policy and policy_id:
+                await session.execute(delete(SubsidyPolicy).where(SubsidyPolicy.id == policy_id))
+            await session.commit()
+
+
+@pytest.mark.anyio
 async def test_ineligible_buyer_quota_is_hidden_from_home_and_quota_api():
     now = datetime.utcnow()
     kk = KK(code=f"KK-NONELIG-{uuid4().hex[:8]}")

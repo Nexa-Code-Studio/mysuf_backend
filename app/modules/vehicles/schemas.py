@@ -238,3 +238,28 @@ class BuyerFamilyVehicleResponse(BaseModel):
 class BuyerFamilyOverviewResponse(BaseModel):
     members: List[BuyerFamilyMemberResponse]
     vehicles: List[BuyerFamilyVehicleResponse]
+
+
+class AdminVehicleRequestResponse(BaseModel):
+    id: UUID
+    buyer_profile_id: UUID
+    buyer_name: str
+    buyer_nik: str
+    vehicle_id: UUID
+    ownership_status: VehicleOwnershipStatus
+    usage_type: VehicleUsageType
+    quota_mode: VehicleQuotaMode
+    plate_number_snapshot: str
+    ktp_nfc_id_snapshot: str
+    status: VehicleOwnershipRequestStatus
+    review_note: str | None = None
+    submitted_at: datetime
+    reviewed_at: datetime | None = None
+    documents: List[VehicleOwnershipDocumentResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VehicleOwnershipRequestVerify(BaseModel):
+    status: str  # "APPROVED" or "REJECTED"
+    review_note: Optional[str] = None

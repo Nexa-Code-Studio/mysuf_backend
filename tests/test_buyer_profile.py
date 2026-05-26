@@ -45,13 +45,13 @@ async def test_buyer_profile_flow():
         )
         session.add(buyer)
         
-        # Create Non-BUYER User (SUPERADMIN)
+        # Create Non-BUYER User (SUPER_ADMIN)
         non_buyer = User(
             id=non_buyer_id,
             name="Test Admin",
             email=email_non_buyer,
             password=get_password_hash("password123"),
-            role=[UserRole.SUPERADMIN],
+            role=[UserRole.SUPER_ADMIN],
             is_active=True
         )
         session.add(non_buyer)
@@ -71,7 +71,7 @@ async def test_buyer_profile_flow():
         subject=non_buyer_id,
         session_id=str(uuid4()),
         client_type="ADMIN_WEB",
-        roles=["SUPERADMIN"],
+        roles=["SUPER_ADMIN"],
         allowed_apps=["ADMIN_WEB"]
     )
     
@@ -206,7 +206,7 @@ async def test_buyer_profile_flow():
                         buyer_profile_id=profile_uuid,
                         vehicle_id=vehicle_id,
                         ownership_status=VehicleOwnershipStatus.PERSONAL,
-                        usage_type=VehicleUsageType.UMKM,
+                        usage_type=VehicleUsageType.COMMERCIAL_CAR,
                         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                         plate_number_snapshot="B 1234 XYZ",
                         ktp_nfc_id_snapshot="NFC123456",
@@ -318,7 +318,7 @@ async def test_buyer_profile_nfc_update_propagates_to_related_records():
                 buyer_profile_id=profile_id,
                 vehicle_id=vehicle_id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.UMKM,
+                usage_type=VehicleUsageType.COMMERCIAL_CAR,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot="B 1234 XYZ",
                 ktp_nfc_id_snapshot="NFC-OLD-001",

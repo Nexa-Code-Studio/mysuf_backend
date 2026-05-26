@@ -250,3 +250,14 @@ class VehicleRepository:
         self.db.add(eligibility)
         await self.db.flush()
         return eligibility
+
+    async def get_all_vehicle_ownership_requests(self) -> List[VehicleOwnershipRequest]:
+        result = await self.db.execute(
+            select(VehicleOwnershipRequest)
+            .options(
+                selectinload(VehicleOwnershipRequest.documents),
+                selectinload(VehicleOwnershipRequest.buyer_profile).selectinload(BuyerProfile.user),
+            )
+            .order_by(VehicleOwnershipRequest.submitted_at.desc(), VehicleOwnershipRequest.id.desc())
+        )
+        return list(result.scalars().all())

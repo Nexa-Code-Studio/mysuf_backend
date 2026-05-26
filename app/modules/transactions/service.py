@@ -50,6 +50,42 @@ class TransactionService:
         self.user_repo = UserRepository(db)
         self.wallet_service = WalletService(db)
 
+    @staticmethod
+    def _currency_amount(value: Decimal) -> Decimal:
+        return Decimal(value).quantize(Decimal("0.01"))
+
+    def _build_fuel_purchase_pricing(
+        self,
+        *,
+        request_liters: Decimal,
+        fuel_type: Any,
+        subsidy_quota: Any | None,
+    ) -> dict[str, Any]:
+        market_price = Decimal(fuel_type.price_per_liter)
+        subsidized_price = Decimal(fuel_type.subsidy_price_per_liter) if fuel_type.subsidy_price_per_liter is not None else None
+
+        subsidized_liters = Decimal("0")
+        non_subsidized_liters = Decimal(request_liters)
+
+        if subsidy_quota is not None and subsidized_price is not None:
+            quota_liters = Decimal(subsidy_quota.quota_liters)
+            used_liters = Decimal(subsidy_quota.used_liters)
+            remaining_quota = max(Decimal("0"), quota_liters - used_liters)
+            subsidized_liters = min(remaining_quota, Decimal(request_liters))
+            non_subsidized_liters = Decimal(request_liters) - subsidized_liters
+
+        total_amount = (
+            (subsidized_liters * subsidized_price) if subsidized_price is not None else Decimal("0")
+        ) + (non_subsidized_liters * market_price)
+
+        return {
+            "subsidized_liters": subsidized_liters,
+            "non_subsidized_liters": non_subsidized_liters,
+            "total_amount": self._currency_amount(total_amount),
+            "market_price_per_liter": self._currency_amount(market_price),
+            "subsidized_price_per_liter": self._currency_amount(subsidized_price) if subsidized_price is not None else None,
+        }
+
     async def create_topup_session(self, user_id: str | UUID, amount: Decimal) -> PaymentTransaction:
         # 1. Retrieve or lazily create the user's wallet
         wallet = await self.wallet_service.get_or_create_user_wallet(user_id)
@@ -870,6 +906,66 @@ class TransactionService:
             "action": action
         }
 
+    async def _create_fraud_log(
+        self,
+        buyer_profile: Any,
+        vehicle_ownership: Any,
+        current_station: Any,
+        fraud_assessment: dict,
+        fuel_transaction_id: Any = None
+    ) -> None:
+        from app.modules.transactions.models import FraudLog, FraudRiskLevel, FraudActionTaken, FraudCaseStatus
+        from uuid_extensions import uuid7
+        from datetime import datetime
+        from typing import Any
+
+        # Generate readable unique case_id
+        from uuid import uuid4
+        case_id = f"FR-{datetime.utcnow().strftime('%y%m%d')}-{uuid4().hex[:4].upper()}"
+
+        # Map risk level
+        risk_score = fraud_assessment.get("risk_score", 0)
+        if risk_score > 100:
+            risk_level = FraudRiskLevel.CRITICAL
+        elif risk_score >= 61:
+            risk_level = FraudRiskLevel.HIGH_RISK
+        elif risk_score >= 31:
+            risk_level = FraudRiskLevel.SUSPICIOUS
+        else:
+            risk_level = FraudRiskLevel.SAFE
+
+        # Map action taken
+        action = fraud_assessment.get("action", "ALLOW TRANSACTION")
+        if action == "BLOCK ACCOUNT":
+            action_taken = FraudActionTaken.BLOCK_ACCOUNT
+        elif action == "FREEZE ACCOUNT":
+            action_taken = FraudActionTaken.FREEZE_ACCOUNT
+        elif action == "WARNING":
+            action_taken = FraudActionTaken.WARNING
+        else:
+            action_taken = FraudActionTaken.ALLOW_TRANSACTION
+
+        # NIK snapshot masking
+        raw_nik = getattr(buyer_profile, "nik_snapshot", None)
+        nik_snapshot = self._mask_nik(raw_nik) if raw_nik else None
+
+        fraud_log = FraudLog(
+            id=uuid7(),
+            case_id=case_id,
+            fuel_transaction_id=fuel_transaction_id,
+            gas_station_id=current_station.id,
+            buyer_profile_id=buyer_profile.id if buyer_profile else None,
+            vehicle_ownership_id=vehicle_ownership.id if vehicle_ownership else None,
+            plate_number_snapshot=getattr(vehicle_ownership, "plate_number_snapshot", "N/A"),
+            nik_snapshot=nik_snapshot,
+            risk_score=risk_score,
+            risk_level=risk_level,
+            action_taken=action_taken,
+            detected_frauds=fraud_assessment.get("detected_frauds", []),
+            status=FraudCaseStatus.PENDING
+        )
+        self.db.add(fraud_log)
+
     async def log_cashier_scan_event(
         self,
         *,
@@ -1013,8 +1109,11 @@ class TransactionService:
                 detail="SPBU tempat kasir bertugas tidak ditemukan.",
             )
 
+        from sqlalchemy.orm import selectinload
         res_profile = await self.db.execute(
-            select(BuyerProfile).filter(BuyerProfile.nik_snapshot == request.nik),
+            select(BuyerProfile)
+            .options(selectinload(BuyerProfile.user))
+            .filter(BuyerProfile.nik_snapshot == request.nik),
         )
         buyer_profile = res_profile.scalars().first()
         if not buyer_profile:
@@ -1060,11 +1159,6 @@ class TransactionService:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="E-Wallet pembeli tidak ditemukan atau tidak aktif.",
                 )
-            if wallet.balance < request.total_amount:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Saldo E-Wallet KTP tidak mencukupi untuk melakukan transaksi.",
-                )
         else:
             wallet = await self.wallet_service.get_or_create_user_wallet(buyer_profile.user_id)
 
@@ -1106,15 +1200,27 @@ class TransactionService:
                 buyer_profile.verification_status = VerificationStatus.UNVERIFIED
                 detail_msg = "Transaksi dibatalkan & akun dibekukan karena terdeteksi aktivitas mencurigakan berisiko tinggi."
 
+            # Automatically log the fraud incident before blocking
+            await self._create_fraud_log(
+                buyer_profile=buyer_profile,
+                vehicle_ownership=vehicle_ownership,
+                current_station=current_station,
+                fraud_assessment=fraud_assessment,
+            )
+
             await self.db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"{detail_msg} Alasan: {', '.join(f['reason'] for f in fraud_assessment['detected_frauds'])}",
             )
 
-        is_subsidized_purchase = False
         subsidy_quota = None
         kk_eligibility_id = None
+        subsidized_liters = Decimal("0")
+        non_subsidized_liters = Decimal(request.liters)
+        total_amount = self._currency_amount(Decimal(fuel_type.price_per_liter) * Decimal(request.liters))
+        market_price_per_liter = self._currency_amount(Decimal(fuel_type.price_per_liter))
+        subsidized_price_per_liter = None
 
         if fuel_type.subsidy_type == SubsidyType.SUBSIDIZED:
             subsidy_service = SubsidyService(self.db)
@@ -1124,58 +1230,65 @@ class TransactionService:
 
             if vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
                 policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
-                if not policy:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Kebijakan subsidi untuk kendaraan pribadi tidak ditemukan.",
+                if policy:
+                    latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
+                        kk_id=buyer_profile.kk_id,
+                        subsidy_policy_id=policy.id,
                     )
-                latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
-                    kk_id=buyer_profile.kk_id,
-                    subsidy_policy_id=policy.id,
-                )
-                if not latest_eligibility or latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Pembeli atau Kartu Keluarga ini tidak eligible untuk menerima BBM bersubsidi.",
-                    )
-
-                is_subsidized_purchase = True
-                kk_eligibility_id = latest_eligibility.id
-                subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
-                    vehicle_ownership=vehicle_ownership,
-                    month=month,
-                    year=year,
-                    kk_subsidy_eligibility_id=kk_eligibility_id,
-                )
+                    if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
+                        kk_eligibility_id = latest_eligibility.id
+                        subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                            vehicle_ownership=vehicle_ownership,
+                            month=month,
+                            year=year,
+                            kk_subsidy_eligibility_id=kk_eligibility_id,
+                        )
             else:
                 policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
                 if policy:
-                    is_subsidized_purchase = True
                     subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
                         vehicle_ownership=vehicle_ownership,
                         month=month,
                         year=year,
                     )
 
-            if is_subsidized_purchase and subsidy_quota:
-                quota_liters = Decimal(subsidy_quota.quota_liters)
-                used_liters = Decimal(subsidy_quota.used_liters)
-                remaining_quota = quota_liters - used_liters
-                if remaining_quota < request.liters:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=(
-                            f"Transaksi gagal. Sisa kuota subsidi bulanan Anda ({float(remaining_quota):.2f} Liter) "
-                            f"tidak mencukupi untuk pembelian {float(request.liters):.2f} Liter."
-                        ),
-                    )
-                subsidy_quota.used_liters += request.liters
+            pricing = self._build_fuel_purchase_pricing(
+                request_liters=request.liters,
+                fuel_type=fuel_type,
+                subsidy_quota=subsidy_quota,
+            )
+            subsidized_liters = pricing["subsidized_liters"]
+            non_subsidized_liters = pricing["non_subsidized_liters"]
+            total_amount = pricing["total_amount"]
+            market_price_per_liter = pricing["market_price_per_liter"]
+            subsidized_price_per_liter = pricing["subsidized_price_per_liter"]
+
+            if subsidized_liters > 0 and subsidy_quota is not None:
+                subsidy_quota.used_liters += subsidized_liters
+
+        if require_wallet_payment and wallet.balance < total_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Saldo E-Wallet KTP tidak mencukupi untuk melakukan transaksi.",
+            )
 
         if fraud_assessment["risk_score"] > 0:
             buyer_profile.risk_score = min(
                 Decimal("100.00"),
                 buyer_profile.risk_score + Decimal(str(fraud_assessment["risk_score"])),
             )
+            from app.modules.users.service import UserService
+            if buyer_profile.user:
+                UserService.update_user_fraud_status(buyer_profile.user, float(buyer_profile.risk_score))
+
+            # Automatically log suspicious but allowed transactions
+            if fraud_assessment["risk_score"] > 30:
+                await self._create_fraud_log(
+                    buyer_profile=buyer_profile,
+                    vehicle_ownership=vehicle_ownership,
+                    current_station=current_station,
+                    fraud_assessment=fraud_assessment,
+                )
 
         return {
             "buyer_profile": buyer_profile,
@@ -1184,9 +1297,14 @@ class TransactionService:
             "fuel_type": fuel_type,
             "current_station": current_station,
             "fraud_assessment": fraud_assessment,
-            "is_subsidized_purchase": is_subsidized_purchase,
+            "is_subsidized_purchase": subsidized_liters > 0,
             "subsidy_quota": subsidy_quota,
             "kk_eligibility_id": kk_eligibility_id,
+            "subsidized_liters": subsidized_liters,
+            "non_subsidized_liters": non_subsidized_liters,
+            "total_amount": total_amount,
+            "market_price_per_liter": market_price_per_liter,
+            "subsidized_price_per_liter": subsidized_price_per_liter,
         }
 
     def _serialize_qris_status(self, fuel_tx: Any, payment_tx: PaymentTransaction) -> dict[str, Any]:
@@ -1223,7 +1341,7 @@ class TransactionService:
             return
         fuel_tx.subsidy_quota.used_liters = max(
             Decimal("0"),
-            Decimal(fuel_tx.subsidy_quota.used_liters) - Decimal(fuel_tx.liters),
+            Decimal(fuel_tx.subsidy_quota.used_liters) - Decimal(fuel_tx.subsidized_liters),
         )
 
     async def _complete_qris_fuel_purchase(self, fuel_tx: Any, payment_tx: PaymentTransaction) -> None:
@@ -1359,6 +1477,11 @@ class TransactionService:
         is_subsidized_purchase = context["is_subsidized_purchase"]
         subsidy_quota = context["subsidy_quota"]
         kk_eligibility_id = context["kk_eligibility_id"]
+        subsidized_liters = context["subsidized_liters"]
+        non_subsidized_liters = context["non_subsidized_liters"]
+        total_amount = context["total_amount"]
+        market_price_per_liter = context["market_price_per_liter"]
+        subsidized_price_per_liter = context["subsidized_price_per_liter"]
 
         reference_id = f"fuel_xendit_{uuid7().hex}"
         fuel_tx = FuelTransaction(
@@ -1371,11 +1494,11 @@ class TransactionService:
             subsidy_quota_id=subsidy_quota.id if is_subsidized_purchase else None,
             kk_subsidy_eligibility_id=kk_eligibility_id if is_subsidized_purchase else None,
             is_subsidized=is_subsidized_purchase,
-            subsidized_liters=request.liters if is_subsidized_purchase else Decimal("0"),
-            non_subsidized_liters=Decimal("0") if is_subsidized_purchase else request.liters,
-            market_price_per_liter=Decimal(fuel_type.price_per_liter),
-            subsidized_price_per_liter=Decimal(fuel_type.subsidy_price_per_liter) if is_subsidized_purchase else None,
-            total_amount=request.total_amount,
+            subsidized_liters=subsidized_liters,
+            non_subsidized_liters=non_subsidized_liters,
+            market_price_per_liter=market_price_per_liter,
+            subsidized_price_per_liter=subsidized_price_per_liter if is_subsidized_purchase else None,
+            total_amount=total_amount,
             payment_method=PaymentMethod.XENDIT,
             wallet_transaction_id=None,
             transaction_status=FuelTransactionStatus.PENDING,
@@ -1391,7 +1514,7 @@ class TransactionService:
             fuel_transaction_id=fuel_tx.id,
             provider=PaymentProvider.XENDIT,
             external_id=reference_id,
-            amount=request.total_amount,
+            amount=total_amount,
             status=PaymentStatus.PENDING,
         )
         self.db.add(payment_tx)
@@ -1401,7 +1524,7 @@ class TransactionService:
             "reference_id": reference_id,
             "session_type": "PAY",
             "mode": "PAYMENT_LINK",
-            "amount": float(request.total_amount),
+            "amount": float(total_amount),
             "currency": "IDR",
             "country": "ID",
             "success_return_url": settings.XENDIT_SUCCESS_URL,
@@ -1520,17 +1643,29 @@ class TransactionService:
         is_subsidized_purchase = context["is_subsidized_purchase"]
         subsidy_quota = context["subsidy_quota"]
         kk_eligibility_id = context["kk_eligibility_id"]
+        subsidized_liters = context["subsidized_liters"]
+        non_subsidized_liters = context["non_subsidized_liters"]
+        total_amount = context["total_amount"]
+        market_price_per_liter = context["market_price_per_liter"]
+        subsidized_price_per_liter = context["subsidized_price_per_liter"]
+
+        if payment_method == PaymentMethod.CASH:
+            if request.amount_paid is None or Decimal(request.amount_paid) < total_amount:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Nominal uang diterima tidak boleh kurang dari total harga.",
+                )
 
         wallet_tx = None
         if payment_method == PaymentMethod.WALLET and wallet is not None:
             balance_before = wallet.balance
-            wallet.balance -= request.total_amount
+            wallet.balance -= total_amount
             balance_after = wallet.balance
             wallet_tx = WalletTransaction(
                 wallet_id=wallet.id,
                 type=TransactionType.FUEL_PURCHASE,
                 transaction_flow=TransactionFlow.OUT,
-                amount=request.total_amount,
+                amount=total_amount,
                 balance_before=balance_before,
                 balance_after=balance_after,
                 description=f"Pembelian {fuel_type.name} - {request.plate_number}",
@@ -1549,11 +1684,11 @@ class TransactionService:
             subsidy_quota_id=subsidy_quota.id if is_subsidized_purchase else None,
             kk_subsidy_eligibility_id=kk_eligibility_id if is_subsidized_purchase else None,
             is_subsidized=is_subsidized_purchase,
-            subsidized_liters=request.liters if is_subsidized_purchase else Decimal("0"),
-            non_subsidized_liters=Decimal("0") if is_subsidized_purchase else request.liters,
-            market_price_per_liter=Decimal(fuel_type.price_per_liter),
-            subsidized_price_per_liter=Decimal(fuel_type.subsidy_price_per_liter) if is_subsidized_purchase else None,
-            total_amount=request.total_amount,
+            subsidized_liters=subsidized_liters,
+            non_subsidized_liters=non_subsidized_liters,
+            market_price_per_liter=market_price_per_liter,
+            subsidized_price_per_liter=subsidized_price_per_liter if is_subsidized_purchase else None,
+            total_amount=total_amount,
             payment_method=payment_method,
             wallet_transaction_id=wallet_tx.id if wallet_tx else None,
             transaction_status=FuelTransactionStatus.COMPLETED,
@@ -1568,7 +1703,7 @@ class TransactionService:
 
         try:
             from app.modules.notifications.service import NotificationService
-            formatted_amount = f"Rp {int(request.total_amount):,}".replace(",", ".")
+            formatted_amount = f"Rp {int(total_amount):,}".replace(",", ".")
             warning_msg = ""
             if fraud_assessment["risk_score"] > 0:
                 warning_msg = f" Peringatan: Aktivitas transaksi terdeteksi anomali (Skor Risiko: {fraud_assessment['risk_score']})."
@@ -1616,6 +1751,11 @@ class TransactionService:
         is_subsidized_purchase = context["is_subsidized_purchase"]
         subsidy_quota = context["subsidy_quota"]
         kk_eligibility_id = context["kk_eligibility_id"]
+        subsidized_liters = context["subsidized_liters"]
+        non_subsidized_liters = context["non_subsidized_liters"]
+        total_amount = context["total_amount"]
+        market_price_per_liter = context["market_price_per_liter"]
+        subsidized_price_per_liter = context["subsidized_price_per_liter"]
 
         reference_id = f"fuel_qris_{uuid7().hex}"
         fuel_tx = FuelTransaction(
@@ -1628,11 +1768,11 @@ class TransactionService:
             subsidy_quota_id=subsidy_quota.id if is_subsidized_purchase else None,
             kk_subsidy_eligibility_id=kk_eligibility_id if is_subsidized_purchase else None,
             is_subsidized=is_subsidized_purchase,
-            subsidized_liters=request.liters if is_subsidized_purchase else Decimal("0"),
-            non_subsidized_liters=Decimal("0") if is_subsidized_purchase else request.liters,
-            market_price_per_liter=Decimal(fuel_type.price_per_liter),
-            subsidized_price_per_liter=Decimal(fuel_type.subsidy_price_per_liter) if is_subsidized_purchase else None,
-            total_amount=request.total_amount,
+            subsidized_liters=subsidized_liters,
+            non_subsidized_liters=non_subsidized_liters,
+            market_price_per_liter=market_price_per_liter,
+            subsidized_price_per_liter=subsidized_price_per_liter if is_subsidized_purchase else None,
+            total_amount=total_amount,
             payment_method=PaymentMethod.QRIS,
             wallet_transaction_id=None,
             transaction_status=FuelTransactionStatus.PENDING,
@@ -1648,7 +1788,7 @@ class TransactionService:
             fuel_transaction_id=fuel_tx.id,
             provider=PaymentProvider.XENDIT,
             external_id=reference_id,
-            amount=request.total_amount,
+            amount=total_amount,
             status=PaymentStatus.PENDING,
         )
         self.db.add(payment_tx)
@@ -1659,7 +1799,7 @@ class TransactionService:
             "type": "PAY",
             "country": "ID",
             "currency": "IDR",
-            "request_amount": float(request.total_amount),
+            "request_amount": float(total_amount),
             "capture_method": "AUTOMATIC",
             "channel_code": "QRIS",
             "channel_properties": {
@@ -1759,3 +1899,872 @@ class TransactionService:
         if fuel_tx.transaction_status == FuelTransactionStatus.PENDING:
             return await self._sync_qris_payment_from_xendit(fuel_tx, payment_tx)
         return self._serialize_qris_status(fuel_tx, payment_tx)
+
+    async def get_fraud_logs(
+        self,
+        current_user: Any,
+        *,
+        gas_station_id: UUID | None = None,
+        risk_level: str | None = None,
+        status_filter: str | None = None,
+        search: str | None = None,
+        limit: int = 20,
+        offset: int = 0
+    ) -> dict:
+        from sqlalchemy import select, func, or_
+        from sqlalchemy.orm import selectinload
+        from app.modules.transactions.models import FraudLog, FraudRiskLevel, FraudCaseStatus
+        from app.modules.users.models import User, UserRole, BuyerProfile
+        from app.modules.gas_stations.models import GasStation
+        from datetime import datetime
+
+        # 1. Scope query based on user roles
+        base_stmt = select(FraudLog)
+        is_spbu_role = any(r in current_user.role for r in [UserRole.SPBU_ADMIN, UserRole.SALES_OFFICER])
+
+        if is_spbu_role:
+            if not current_user.gas_station_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pengguna SPBU tidak terasosiasi dengan stasiun SPBU manapun."
+                )
+            base_stmt = base_stmt.filter(FraudLog.gas_station_id == current_user.gas_station_id)
+        elif gas_station_id:
+            base_stmt = base_stmt.filter(FraudLog.gas_station_id == gas_station_id)
+
+        # 2. Query stats in current scope
+        stats_stmt = select(
+            func.count(FraudLog.id).label("total"),
+            func.count(func.nullif(FraudLog.risk_level == FraudRiskLevel.SUSPICIOUS, False)).label("suspicious"),
+            func.count(func.nullif(FraudLog.risk_level == FraudRiskLevel.HIGH_RISK, False)).label("high_risk"),
+            func.count(func.nullif(FraudLog.risk_level == FraudRiskLevel.CRITICAL, False)).label("critical")
+        )
+        if is_spbu_role:
+            stats_stmt = stats_stmt.filter(FraudLog.gas_station_id == current_user.gas_station_id)
+        elif gas_station_id:
+            stats_stmt = stats_stmt.filter(FraudLog.gas_station_id == gas_station_id)
+
+        stats_res = await self.db.execute(stats_stmt)
+        stats_row = stats_res.first()
+        stats = {
+            "total": stats_row.total or 0,
+            "suspicious": stats_row.suspicious or 0,
+            "high_risk": stats_row.high_risk or 0,
+            "critical": stats_row.critical or 0
+        }
+
+        # 3. Apply filters to base query
+        stmt = base_stmt.options(
+            selectinload(FraudLog.gas_station),
+            selectinload(FraudLog.buyer_profile).selectinload(BuyerProfile.user),
+            selectinload(FraudLog.resolved_by)
+        )
+
+        if risk_level:
+            try:
+                stmt = stmt.filter(FraudLog.risk_level == FraudRiskLevel(risk_level.upper()))
+            except ValueError:
+                pass
+        if status_filter:
+            try:
+                stmt = stmt.filter(FraudLog.status == FraudCaseStatus(status_filter.upper()))
+            except ValueError:
+                pass
+        if search:
+            search_clause = or_(
+                FraudLog.case_id.ilike(f"%{search}%"),
+                FraudLog.plate_number_snapshot.ilike(f"%{search}%"),
+                FraudLog.nik_snapshot.ilike(f"%{search}%"),
+            )
+            stmt = stmt.outerjoin(BuyerProfile, FraudLog.buyer_profile_id == BuyerProfile.id)\
+                       .outerjoin(User, BuyerProfile.user_id == User.id)\
+                       .filter(or_(search_clause, User.name.ilike(f"%{search}%")))
+
+        # Get total count matching active filters
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_count_res = await self.db.execute(count_stmt)
+        total_count = total_count_res.scalar() or 0
+
+        # Paginate results ordered by most recent first
+        stmt = stmt.order_by(FraudLog.created_at.desc()).offset(offset).limit(limit)
+        res = await self.db.execute(stmt)
+        logs = res.scalars().all()
+
+        items = []
+        for log in logs:
+            buyer_name = log.buyer_profile.user.name if log.buyer_profile and log.buyer_profile.user else None
+            resolved_by_name = log.resolved_by.name if log.resolved_by else None
+            items.append({
+                "id": log.id,
+                "case_id": log.case_id,
+                "fuel_transaction_id": log.fuel_transaction_id,
+                "gas_station_id": log.gas_station_id,
+                "gas_station_name": log.gas_station.name if log.gas_station else "Stasiun SPBU",
+                "buyer_profile_id": log.buyer_profile_id,
+                "buyer_name": buyer_name,
+                "vehicle_ownership_id": log.vehicle_ownership_id,
+                "plate_number_snapshot": log.plate_number_snapshot,
+                "nik_snapshot": log.nik_snapshot,
+                "risk_score": log.risk_score,
+                "risk_level": log.risk_level.value,
+                "action_taken": log.action_taken.value,
+                "detected_frauds": log.detected_frauds,
+                "status": log.status.value,
+                "resolution_notes": log.resolution_notes,
+                "resolved_by_name": resolved_by_name,
+                "resolved_at": log.resolved_at,
+                "created_at": log.created_at
+            })
+
+        return {
+            "stats": stats,
+            "items": items,
+            "total_count": total_count
+        }
+
+    async def update_fraud_log_status(
+        self,
+        current_user: Any,
+        log_id: UUID,
+        status_value: str,
+        resolution_notes: str | None = None
+    ) -> dict:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.modules.transactions.models import FraudLog, FraudCaseStatus
+        from app.modules.users.models import User, UserRole, BuyerProfile
+        from datetime import datetime
+
+        stmt = select(FraudLog).options(
+            selectinload(FraudLog.gas_station),
+            selectinload(FraudLog.buyer_profile).selectinload(BuyerProfile.user),
+            selectinload(FraudLog.resolved_by)
+        ).filter(FraudLog.id == log_id)
+
+        res = await self.db.execute(stmt)
+        log = res.scalars().first()
+        if not log:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Kasus fraud log tidak ditemukan."
+            )
+
+        # Check permissions: SPBU roles can only edit logs from their own station
+        is_spbu_role = any(r in current_user.role for r in [UserRole.SPBU_ADMIN, UserRole.SALES_OFFICER])
+        if is_spbu_role:
+            if log.gas_station_id != current_user.gas_station_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Anda tidak memiliki akses untuk mengubah status kasus dari SPBU lain."
+                )
+
+        # Validate status enum
+        try:
+            new_status = FraudCaseStatus(status_value.upper())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Status '{status_value}' tidak valid. Gunakan PENDING, FLAGGED, atau RESOLVED."
+            )
+
+        log.status = new_status
+        log.resolution_notes = resolution_notes
+        log.resolved_by_user_id = current_user.id
+        log.resolved_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(log)
+
+        buyer_name = log.buyer_profile.user.name if log.buyer_profile and log.buyer_profile.user else None
+        resolved_by_name = current_user.name
+
+        return {
+            "id": log.id,
+            "case_id": log.case_id,
+            "fuel_transaction_id": log.fuel_transaction_id,
+            "gas_station_id": log.gas_station_id,
+            "gas_station_name": log.gas_station.name if log.gas_station else "Stasiun SPBU",
+            "buyer_profile_id": log.buyer_profile_id,
+            "buyer_name": buyer_name,
+            "vehicle_ownership_id": log.vehicle_ownership_id,
+            "plate_number_snapshot": log.plate_number_snapshot,
+            "nik_snapshot": log.nik_snapshot,
+            "risk_score": log.risk_score,
+            "risk_level": log.risk_level.value,
+            "action_taken": log.action_taken.value,
+            "detected_frauds": log.detected_frauds,
+            "status": log.status.value,
+            "resolution_notes": log.resolution_notes,
+            "resolved_by_name": resolved_by_name,
+            "resolved_at": log.resolved_at,
+            "created_at": log.created_at
+        }
+
+    async def get_spbu_dashboard_summary(
+        self,
+        current_user: Any,
+        *,
+        gas_station_id: UUID | None = None
+    ) -> dict:
+        from sqlalchemy import select, func
+        from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus, FraudLog, FraudRiskLevel
+        from app.modules.users.models import UserRole
+        from app.modules.gas_stations.models import GasStation
+        from datetime import datetime
+
+        # 1. Determine target gas station ID
+        target_station_id = gas_station_id
+        is_spbu_role = any(r in current_user.role for r in [UserRole.SPBU_ADMIN, UserRole.SALES_OFFICER])
+
+        if is_spbu_role:
+            if not current_user.gas_station_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pengguna SPBU tidak terasosiasi dengan stasiun SPBU manapun."
+                )
+            target_station_id = current_user.gas_station_id
+        elif not target_station_id:
+            station_stmt = select(GasStation.id).limit(1)
+            station_res = await self.db.execute(station_stmt)
+            target_station_id = station_res.scalar()
+
+        if not target_station_id:
+            return {
+                "gas_station_id": None,
+                "gas_station_name": "Stasiun SPBU",
+                "stats": [
+                    { "label": "Total Transactions", "value": "0", "trend": "0%", "trendDirection": "up", "trendSubtext": "dari kemarin" },
+                    { "label": "Fuel Distributed", "value": "0 L", "trendSubtext": "Hari ini" },
+                    { "label": "Rejected Transactions", "value": "0", "trend": "0", "trendDirection": "up", "trendSubtext": "dari kemarin" },
+                    { "label": "High-Risk Vehicles", "value": "0", "trendSubtext": "Perlu review" }
+                ],
+                "peakHours": [
+                    { "hour": "00:00", "volume": 0 },
+                    { "hour": "03:00", "volume": 0 },
+                    { "hour": "06:00", "volume": 0 },
+                    { "hour": "09:00", "volume": 0 },
+                    { "hour": "12:00", "volume": 0 },
+                    { "hour": "15:00", "volume": 0 },
+                    { "hour": "18:00", "volume": 0 },
+                    { "hour": "21:00", "volume": 0 }
+                ],
+                "fuelTypes": [
+                    { "name": "Subsidi", "value": 0, "color": "#e31837" },
+                    { "name": "Komersial", "value": 0, "color": "#64748b" }
+                ],
+                "fraudAlerts": []
+            }
+
+        # 2. Get active station name
+        station_name_stmt = select(GasStation.name).filter(GasStation.id == target_station_id)
+        station_name_res = await self.db.execute(station_name_stmt)
+        station_name = station_name_res.scalar() or "Stasiun SPBU"
+
+        # 3. Calculate basic counts/sums
+        total_tx_stmt = select(func.count(FuelTransaction.id)).filter(FuelTransaction.gas_station_id == target_station_id)
+        total_tx_res = await self.db.execute(total_tx_stmt)
+        total_tx = total_tx_res.scalar() or 0
+
+        fuel_dist_stmt = select(func.sum(FuelTransaction.liters)).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+        )
+        fuel_dist_res = await self.db.execute(fuel_dist_stmt)
+        fuel_dist = float(fuel_dist_res.scalar() or 0.0)
+
+        failed_tx_stmt = select(func.count(FuelTransaction.id)).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.FAILED
+        )
+        failed_tx_res = await self.db.execute(failed_tx_stmt)
+        failed_tx = failed_tx_res.scalar() or 0
+
+        high_risk_stmt = select(func.count(FraudLog.id)).filter(
+            FraudLog.gas_station_id == target_station_id,
+            FraudLog.risk_level.in_([
+                FraudRiskLevel.HIGH_RISK,
+                FraudRiskLevel.CRITICAL,
+                "HIGH_RISK",
+                "CRITICAL"
+            ])
+        )
+        high_risk_res = await self.db.execute(high_risk_stmt)
+        high_risk = high_risk_res.scalar() or 0
+
+        # 4. Hourly fuel consumption (dialect-independent Python processing)
+        hourly_stmt = select(
+            FuelTransaction.created_at,
+            FuelTransaction.liters
+        ).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+        )
+        hourly_res = await self.db.execute(hourly_stmt)
+        hourly_rows = hourly_res.all()
+
+        peak_hours_map = {h: 0.0 for h in [0, 3, 6, 9, 12, 15, 18, 21]}
+        for row in hourly_rows:
+            dt = row.created_at
+            if dt:
+                hr = dt.hour
+                closest_block = (hr // 3) * 3
+                if closest_block in peak_hours_map:
+                    peak_hours_map[closest_block] += float(row.liters or 0.0)
+
+        peak_hours = [
+            { "hour": f"{h:02d}:00", "volume": round(vol, 1) }
+            for h, vol in sorted(peak_hours_map.items())
+        ]
+
+        # 5. Subsidi vs Komersial (safe index access)
+        subsidy_stmt = select(
+            func.sum(FuelTransaction.subsidized_liters),
+            func.sum(FuelTransaction.non_subsidized_liters)
+        ).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+        )
+        subsidy_res = await self.db.execute(subsidy_stmt)
+        subsidy_row = subsidy_res.first()
+        subsidy_val = 0.0
+        commercial_val = 0.0
+        if subsidy_row:
+            subsidy_val = float(subsidy_row[0] or 0.0)
+            commercial_val = float(subsidy_row[1] or 0.0)
+
+        fuel_types = [
+            { "name": "Subsidi", "value": round(subsidy_val, 1), "color": "#e31837" },
+            { "name": "Komersial", "value": round(commercial_val, 1), "color": "#64748b" }
+        ]
+
+        # 6. Real-time Fraud Alerts (top 5 recent)
+        alerts_stmt = select(FraudLog).filter(
+            FraudLog.gas_station_id == target_station_id
+        ).order_by(FraudLog.created_at.desc()).limit(5)
+        alerts_res = await self.db.execute(alerts_stmt)
+        alerts_list = alerts_res.scalars().all()
+
+        fraud_alerts = []
+        for log in alerts_list:
+            reason = log.detected_frauds[0].get("reason", "Anomali terdeteksi") if log.detected_frauds else "Analisis anomali"
+            risk_val = getattr(log.risk_level, "value", str(log.risk_level)) if log.risk_level else "UNKNOWN"
+            risk_label = "HIGH RISK" if risk_val == "HIGH_RISK" else risk_val.replace("_", " ")
+            fraud_alerts.append({
+                "time": log.created_at.strftime("%H:%M") if log.created_at else "--:--",
+                "vehicle": log.plate_number_snapshot,
+                "account": f"NIK {log.nik_snapshot[:4]}..." if log.nik_snapshot else "NIK -",
+                "reason": reason,
+                "risk": risk_label
+            })
+
+        stats = [
+            {
+                "label": "Total Transactions",
+                "value": f"{total_tx:,}",
+                "trend": "+12%",
+                "trendDirection": "up",
+                "trendSubtext": "dari kemarin",
+            },
+            {
+                "label": "Fuel Distributed",
+                "value": f"{fuel_dist:,.1f} L" if fuel_dist > 0 else "0 L",
+                "trendSubtext": "Hari ini",
+            },
+            {
+                "label": "Rejected Transactions",
+                "value": f"{failed_tx}",
+                "trend": f"+{failed_tx}" if failed_tx > 0 else "0",
+                "trendDirection": "down" if failed_tx > 0 else "up",
+                "trendSubtext": "dari kemarin",
+            },
+            {
+                "label": "High-Risk Vehicles",
+                "value": f"{high_risk}",
+                "trendSubtext": "Perlu review",
+            }
+        ]
+
+        return {
+            "gas_station_id": target_station_id,
+            "gas_station_name": station_name,
+            "stats": stats,
+            "peakHours": peak_hours,
+            "fuelTypes": fuel_types,
+            "fraudAlerts": fraud_alerts
+        }
+
+    async def get_spbu_transactions(
+        self,
+        current_user: Any,
+        *,
+        page: int = 1,
+        size: int = 10,
+        fuel_type: str | None = None,
+        status: str | None = None,
+        search: str | None = None,
+        gas_station_id: UUID | None = None
+    ) -> dict:
+        from sqlalchemy import select, func, or_, and_, cast, String
+        from sqlalchemy.orm import selectinload
+        from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus
+        from app.modules.users.models import UserRole, User
+        from app.modules.gas_stations.models import GasStation
+        from app.modules.fuels.models import FuelType
+
+        # 1. Determine target gas station ID
+        target_station_id = gas_station_id
+        is_spbu_role = any(r in current_user.role for r in [UserRole.SPBU_ADMIN, UserRole.SALES_OFFICER])
+
+        if is_spbu_role:
+            if not current_user.gas_station_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pengguna SPBU tidak terasosiasi dengan stasiun SPBU manapun."
+                )
+            target_station_id = current_user.gas_station_id
+        elif not target_station_id:
+            station_stmt = select(GasStation.id).limit(1)
+            station_res = await self.db.execute(station_stmt)
+            target_station_id = station_res.scalar()
+
+        if not target_station_id:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "size": size,
+                "pages": 0,
+                "summary": {
+                    "total_active_transactions": 0,
+                    "total_volume": 0.0,
+                    "total_revenue": 0.0
+                }
+            }
+
+        # 2. Construct base statement
+        stmt = (
+            select(FuelTransaction)
+            .options(
+                selectinload(FuelTransaction.fuel_type),
+                selectinload(FuelTransaction.verified_by)
+            )
+            .filter(FuelTransaction.gas_station_id == target_station_id)
+        )
+
+        # 3. Apply Filters
+        # Fuel Type filter
+        if fuel_type and fuel_type != "Semua":
+            term = f"%{fuel_type.strip().lower()}%"
+            stmt = stmt.join(FuelTransaction.fuel_type).filter(
+                func.lower(FuelType.name).like(term)
+            )
+
+        # Status filter
+        if status and status != "Semua":
+            if status == "Success":
+                stmt = stmt.filter(FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED)
+            elif status == "Review":
+                stmt = stmt.filter(FuelTransaction.transaction_status == FuelTransactionStatus.PENDING)
+            elif status == "Rejected":
+                stmt = stmt.filter(
+                    FuelTransaction.transaction_status.in_(
+                        [FuelTransactionStatus.CANCELLED, FuelTransactionStatus.FAILED]
+                    )
+                )
+
+        # Search term filter
+        if search:
+            term = f"%{search.strip().lower()}%"
+            stmt = stmt.outerjoin(FuelTransaction.verified_by)
+            stmt = stmt.outerjoin(FuelTransaction.fuel_type)
+            stmt = stmt.filter(
+                or_(
+                    func.lower(cast(FuelTransaction.id, String)).like(term),
+                    func.lower(FuelTransaction.plate_number_snapshot).like(term),
+                    func.lower(func.coalesce(FuelTransaction.nik_snapshot, "")).like(term),
+                    func.lower(func.coalesce(User.name, "")).like(term)
+                )
+            )
+
+        # Order by newest
+        stmt = stmt.order_by(FuelTransaction.created_at.desc(), FuelTransaction.id.desc())
+
+        # 4. Calculate total count for the filtered query
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_res = await self.db.execute(count_stmt)
+        total = count_res.scalar() or 0
+
+        # 5. Calculate summary stats
+        # Total revenue of overall COMPLETED transactions at the SPBU
+        revenue_stmt = select(func.sum(FuelTransaction.total_amount)).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+        )
+        revenue_res = await self.db.execute(revenue_stmt)
+        total_revenue = float(revenue_res.scalar() or 0.0)
+
+        # Volume distributed under current filters
+        liters_stmt = select(func.sum(FuelTransaction.liters)).filter(
+            FuelTransaction.gas_station_id == target_station_id,
+            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+        )
+        if fuel_type and fuel_type != "Semua":
+            term = f"%{fuel_type.strip().lower()}%"
+            liters_stmt = liters_stmt.join(FuelTransaction.fuel_type).filter(
+                func.lower(FuelType.name).like(term)
+            )
+        if search:
+            term = f"%{search.strip().lower()}%"
+            liters_stmt = liters_stmt.outerjoin(FuelTransaction.verified_by).outerjoin(FuelTransaction.fuel_type).filter(
+                or_(
+                    func.lower(cast(FuelTransaction.id, String)).like(term),
+                    func.lower(FuelTransaction.plate_number_snapshot).like(term),
+                    func.lower(func.coalesce(FuelTransaction.nik_snapshot, "")).like(term),
+                    func.lower(func.coalesce(User.name, "")).like(term)
+                )
+            )
+        liters_res = await self.db.execute(liters_stmt)
+        total_volume = float(liters_res.scalar() or 0.0)
+
+        # 6. Pagination execution
+        offset = (page - 1) * size
+        stmt = stmt.offset(offset).limit(size)
+        res = await self.db.execute(stmt)
+        transactions = res.scalars().all()
+
+        # 7. Serialize items
+        serialized_items = []
+        for tx in transactions:
+            fuel_name = tx.fuel_type.name if tx.fuel_type else "BBM"
+            cashier_name = tx.verified_by.name if tx.verified_by else "System/Cashier"
+            
+            status_label = "Success"
+            if tx.transaction_status == FuelTransactionStatus.PENDING:
+                status_label = "Review"
+            elif tx.transaction_status in [FuelTransactionStatus.CANCELLED, FuelTransactionStatus.FAILED]:
+                status_label = "Rejected"
+
+            serialized_items.append({
+                "id": str(tx.id),
+                "plate": tx.plate_number_snapshot,
+                "fuel": fuel_name,
+                "volume": float(tx.liters),
+                "price": float(tx.total_amount),
+                "time": tx.created_at.strftime("%H:%M:%S") if tx.created_at else "--:--:--",
+                "date": tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-----",
+                "status": status_label,
+                "cashier": cashier_name
+            })
+
+        pages = (total + size - 1) // size if total else 0
+
+        return {
+            "items": serialized_items,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+            "summary": {
+                "total_active_transactions": total,
+                "total_volume": total_volume,
+                "total_revenue": total_revenue
+            }
+        }
+
+    async def get_government_dashboard_summary(
+        self,
+        current_user: Any
+    ) -> dict:
+        from sqlalchemy import select, func
+        from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus, FraudLog, FraudRiskLevel
+        from app.modules.gas_stations.models import GasStation
+        from datetime import datetime
+
+        # 1. Total Transactions count
+        total_tx_stmt = select(func.count(FuelTransaction.id))
+        total_tx_res = await self.db.execute(total_tx_stmt)
+        total_transactions = total_tx_res.scalar() or 0
+
+        # 2. Risk level counts from fraud_logs
+        safe_count_stmt = select(func.count(FraudLog.id)).filter(FraudLog.risk_level == FraudRiskLevel.SAFE)
+        safe_res = await self.db.execute(safe_count_stmt)
+        safe_count = safe_res.scalar() or 0
+
+        suspicious_count_stmt = select(func.count(FraudLog.id)).filter(FraudLog.risk_level == FraudRiskLevel.SUSPICIOUS)
+        suspicious_res = await self.db.execute(suspicious_count_stmt)
+        suspicious_count = suspicious_res.scalar() or 0
+
+        high_risk_stmt = select(func.count(FraudLog.id)).filter(FraudLog.risk_level == FraudRiskLevel.HIGH_RISK)
+        high_risk_res = await self.db.execute(high_risk_stmt)
+        high_risk_count = high_risk_res.scalar() or 0
+
+        critical_stmt = select(func.count(FraudLog.id)).filter(FraudLog.risk_level == FraudRiskLevel.CRITICAL)
+        critical_res = await self.db.execute(critical_stmt)
+        critical_count = critical_res.scalar() or 0
+
+        # 3. Total Liters and Average Liters
+        liters_stmt = select(
+            func.sum(FuelTransaction.liters),
+            func.avg(FuelTransaction.liters)
+        ).filter(FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED)
+        liters_res = await self.db.execute(liters_stmt)
+        liters_row = liters_res.first()
+        total_liters = float(liters_row[0] or 0.0) if liters_row else 0.0
+        average_liters = float(liters_row[1] or 0.0) if liters_row else 0.0
+
+        # 4. Hourly fuel trend data
+        trend_stmt = select(
+            FuelTransaction.created_at,
+            FuelTransaction.liters
+        ).filter(FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED)
+        trend_res = await self.db.execute(trend_stmt)
+        trend_rows = trend_res.all()
+
+        trend_map = {}
+        for row in trend_rows:
+            dt = row.created_at
+            if dt:
+                period = dt.strftime("%H:%M")
+                trend_map[period] = trend_map.get(period, 0.0) + float(row.liters or 0.0)
+
+        fuel_trend_data = [
+            {"period": p, "liters": round(vol, 2)}
+            for p, vol in sorted(trend_map.items())
+        ]
+
+        # 5. Top stations with highest fraud count/score
+        station_stmt = select(
+            GasStation.name,
+            func.coalesce(
+                select(func.count(FuelTransaction.id))
+                .where(FuelTransaction.gas_station_id == GasStation.id)
+                .scalar_subquery(),
+                0
+            ),
+            func.coalesce(
+                select(func.count(FraudLog.id))
+                .where(FraudLog.gas_station_id == GasStation.id)
+                .scalar_subquery(),
+                0
+            ),
+            func.coalesce(
+                select(func.sum(FraudLog.risk_score))
+                .where(FraudLog.gas_station_id == GasStation.id)
+                .scalar_subquery(),
+                0
+            )
+        )
+        station_res = await self.db.execute(station_stmt)
+        station_rows = station_res.all()
+
+        stations_list = []
+        for row in station_rows:
+            station_name, tx_count, fraud_cnt, fraud_score = row
+            if fraud_cnt > 0:
+                stations_list.append({
+                    "label": station_name,
+                    "transactionCount": int(tx_count),
+                    "fraudCount": int(fraud_cnt),
+                    "score": int(fraud_score)
+                })
+
+        stations_list.sort(key=lambda item: (-item["fraudCount"], -item["score"]))
+        stations_with_highest_fraud = stations_list[:5]
+
+        return {
+            "totalTransactions": total_transactions,
+            "safeCount": safe_count,
+            "suspiciousCount": suspicious_count,
+            "highRiskCount": high_risk_count,
+            "criticalCount": critical_count,
+            "totalLiters": round(total_liters, 2),
+            "averageLiters": round(average_liters, 2),
+            "fuelTrendData": fuel_trend_data,
+            "stationsWithHighestFraudCount": stations_with_highest_fraud,
+            "topRiskyUsers": [],
+            "topRiskyFamilies": []
+        }
+
+    @staticmethod
+    def get_spbu_region_by_coordinates(name: str, lat: float, lon: float) -> tuple[str, str]:
+        """
+        Determines the province and island region for a given gas station by its name
+        and coordinates (latitude, longitude) using a fast, zero-dependency heuristic.
+        Returns a tuple of (province_name, island_name).
+        """
+        name_lower = name.lower()
+        
+        # 1. Direct name keyword detection
+        if "banten" in name_lower:
+            return "Banten", "Jawa"
+        if "jakarta" in name_lower or "dki" in name_lower:
+            return "DKI Jakarta", "Jawa"
+        if "jawa barat" in name_lower or "bandung" in name_lower or "bogor" in name_lower:
+            return "Jawa Barat", "Jawa"
+        if "jawa tengah" in name_lower or "diy" in name_lower or "yogyakarta" in name_lower or "solo" in name_lower or "semarang" in name_lower:
+            return "Jawa Tengah", "Jawa"
+        if "jawa timur" in name_lower or "surabaya" in name_lower or "malang" in name_lower:
+            return "Jawa Timur", "Jawa"
+        if "sumatera utara" in name_lower or "medan" in name_lower:
+            return "Sumatera Utara", "Sumatera"
+        if "riau" in name_lower:
+            return "Riau", "Sumatera"
+        if "kalimantan" in name_lower:
+            return "Kalimantan Timur", "Kalimantan"
+        if "sulawesi" in name_lower or "makassar" in name_lower:
+            return "Sulawesi Selatan", "Sulawesi"
+            
+        # 2. Geographic coordinate heuristic (Bounding Boxes)
+        # Jawa: Lon 105.0 to 116.0, Lat -9.0 to -5.0
+        if 105.0 <= lon <= 116.0 and -9.0 <= lat <= -5.0:
+            if lon < 106.3:
+                return "Banten", "Jawa"
+            elif lon < 107.0:
+                return "DKI Jakarta", "Jawa"
+            elif lon < 108.8:
+                return "Jawa Barat", "Jawa"
+            elif lon < 111.5:
+                return "Jawa Tengah", "Jawa"
+            else:
+                return "Jawa Timur", "Jawa"
+                
+        # Sumatera: Lon 95.0 to 106.0, Lat -6.0 to 6.0
+        if 95.0 <= lon <= 106.0 and -6.0 <= lat <= 6.0:
+            if lat > 2.0:
+                return "Sumatera Utara", "Sumatera"
+            else:
+                return "Riau", "Sumatera"
+                
+        # Kalimantan: Lon 108.0 to 119.0, Lat -5.0 to 5.0
+        if 108.0 <= lon <= 119.0 and -5.0 <= lat <= 5.0:
+            return "Kalimantan Timur", "Kalimantan"
+            
+        # Sulawesi: Lon 118.5 to 126.0, Lat -6.0 to 2.0
+        if 118.5 <= lon <= 126.0 and -6.0 <= lat <= 2.0:
+            return "Sulawesi Selatan", "Sulawesi"
+            
+        # Default Fallback
+        return "DKI Jakarta", "Jawa"
+
+    async def get_government_heatmap_data(self, current_user: Any) -> dict:
+        """
+        Gathers raw SPBU geographic positions, total volumes, and fraud statistics,
+        then structures them as:
+        1. GeoJSON Map data for the Heatmap component
+        2. Aggregated provincial stats for the breakdown table
+        """
+        from sqlalchemy import select, func
+        from app.modules.gas_stations.models import GasStation
+        from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus, FraudLog
+        
+        # 1. Fetch all gas stations
+        stations_stmt = select(GasStation)
+        stations_res = await self.db.execute(stations_stmt)
+        stations = stations_res.scalars().all()
+        
+        features = []
+        province_aggregates = {}
+        
+        # We will loop over each station to query its specific volume and fraud logs
+        for station in stations:
+            # A. Calculate total transaction volume (liters) for completed transactions
+            vol_stmt = select(func.sum(FuelTransaction.liters)).filter(
+                FuelTransaction.gas_station_id == station.id,
+                FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+            )
+            vol_res = await self.db.execute(vol_stmt)
+            total_volume = float(vol_res.scalar() or 0.0)
+            
+            # B. Get fraud count and average risk score from fraud_logs
+            fraud_stmt = select(
+                func.count(FraudLog.id),
+                func.avg(FraudLog.risk_score)
+            ).filter(FraudLog.gas_station_id == station.id)
+            fraud_res = await self.db.execute(fraud_stmt)
+            fraud_row = fraud_res.first()
+            fraud_cases = int(fraud_row[0] or 0) if fraud_row else 0
+            avg_risk_score = float(fraud_row[1] or 0.0) if fraud_row else 0.0
+            
+            # C. Determine geographic region using our heuristic helper
+            lat = float(station.latitude)
+            lon = float(station.longitude)
+            province, island = self.get_spbu_region_by_coordinates(station.name, lat, lon)
+            
+            # D. Format intensity: risk score mapped between 0.1 and 1.0 (or default to 0.1)
+            # Intensity = risk score / 100 capped between 0.1 and 1.0
+            intensity = max(0.1, min(1.0, avg_risk_score / 100.0))
+            if fraud_cases == 0:
+                intensity = 0.1
+                
+            # E. Append to Map GeoJSON Features
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [lon, lat],
+                },
+                "properties": {
+                    "id": station.name,
+                    "intensity": intensity,
+                    "fraud_cases": fraud_cases,
+                },
+            })
+            
+            # F. Aggregate province statistics for the table
+            if province not in province_aggregates:
+                province_aggregates[province] = {
+                    "id": str(station.id),
+                    "province": province,
+                    "island": island,
+                    "volume": 0.0,
+                    "activeSpbu": 0,
+                    "fraudScoreSum": 0.0,
+                    "fraudStationCount": 0,  # only stations with at least 1 fraud case
+                    "fraudCases": 0
+                }
+            
+            province_aggregates[province]["volume"] += total_volume
+            province_aggregates[province]["activeSpbu"] += 1
+            province_aggregates[province]["fraudCases"] += fraud_cases
+            # Only accumulate risk score from stations that actually have fraud
+            if fraud_cases > 0:
+                province_aggregates[province]["fraudScoreSum"] += avg_risk_score
+                province_aggregates[province]["fraudStationCount"] += 1
+            
+        # 2. Format province aggregates and calculate dynamic load intensity
+        provinces_list = []
+        for index, (prov_name, data) in enumerate(province_aggregates.items()):
+            active_spbu = data["activeSpbu"]
+            fraud_station_count = data["fraudStationCount"]
+            # Average risk score only across stations that have fraud (not all stations)
+            avg_score = round(data["fraudScoreSum"] / fraud_station_count, 2) if fraud_station_count > 0 else 0.0
+            
+            # Dynamic Intensity Classification based on volume & fraud risk
+            # Map average risk score to a readable string
+            if avg_score >= 80 or data["volume"] >= 1000:
+                intensity_label = "Sangat Tinggi"
+            elif avg_score >= 60 or data["volume"] >= 500:
+                intensity_label = "Tinggi"
+            elif avg_score >= 40 or data["volume"] >= 200:
+                intensity_label = "Sedang"
+            else:
+                intensity_label = "Stabil"
+                
+            provinces_list.append({
+                "id": str(index + 1),
+                "province": prov_name,
+                "island": data["island"],
+                "volume": round(data["volume"], 2),
+                "intensity": intensity_label,
+                "activeSpbu": active_spbu,
+                "fraudScore": int(avg_score)  # 0% if no fraud detected
+            })
+            
+        return {
+            "map_data": {
+                "type": "FeatureCollection",
+                "features": features
+            },
+            "provinces": provinces_list
+        }
+

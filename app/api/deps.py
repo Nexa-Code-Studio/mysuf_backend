@@ -47,6 +47,9 @@ async def get_current_user_with_payload(
     if not user.is_active:
         raise CredentialsException(detail="Inactive user")
         
+    from app.modules.users.service import UserService
+    UserService.check_user_fraud_status(user)
+        
     return user, payload
 
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
@@ -80,6 +83,13 @@ async def get_optional_current_user_with_payload(
     user = result.scalars().first()
     
     if user is None or not user.is_active:
+        return None
+        
+    from datetime import datetime
+    if getattr(user, "is_blocked", False):
+        return None
+    frozen_until = getattr(user, "frozen_until", None)
+    if frozen_until and frozen_until > datetime.utcnow():
         return None
         
     return user, payload

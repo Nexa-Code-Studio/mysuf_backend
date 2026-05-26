@@ -53,7 +53,7 @@ async def test_get_or_create_subsidy_quota_uses_correct_owner_bucket():
         owner_id=buyer_profile.id,
         vehicle_id=ojol_vehicle_id,
         ownership_status=VehicleOwnershipStatus.PERSONAL,
-        usage_type=VehicleUsageType.OJOL,
+        usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
         plate_number_snapshot="B 2000 TST",
         ktp_nfc_id_snapshot=f"NFC-OJL-{uuid4().hex[:8]}",
@@ -89,13 +89,13 @@ async def test_get_or_create_subsidy_quota_uses_correct_owner_bucket():
             assert ojol_quota.id == same_ojol_quota.id
             assert ojol_quota.owner_type == SubsidyOwnerType.VEHICLE
             assert ojol_quota.owner_id == ojol_vehicle_id
-            assert Decimal(ojol_quota.quota_liters) == Decimal("250.00")
+            assert Decimal(ojol_quota.quota_liters) == Decimal("100.00")
 
             personal_policy = await session.scalar(
                 select(SubsidyPolicy).where(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
             )
             ojol_policy = await session.scalar(
-                select(SubsidyPolicy).where(SubsidyPolicy.usage_type == VehicleUsageType.OJOL)
+                select(SubsidyPolicy).where(SubsidyPolicy.usage_type == VehicleUsageType.COMMERCIAL_MOTORCYCLE)
             )
             quota_count = await session.scalar(
                 select(func.count()).select_from(SubsidyQuota).where(

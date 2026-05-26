@@ -33,13 +33,13 @@ async def test_wallet_and_topup_flow():
         )
         session.add(buyer)
         
-        # Create SUPERADMIN User
+        # Create SUPER_ADMIN User
         admin = User(
             id=admin_id,
             name="Test Wallet Admin",
             email=email_admin,
             password=get_password_hash("password123"),
-            role=[UserRole.SUPERADMIN],
+            role=[UserRole.SUPER_ADMIN],
             is_active=True
         )
         session.add(admin)
@@ -59,7 +59,7 @@ async def test_wallet_and_topup_flow():
         subject=admin_id,
         session_id=str(uuid4()),
         client_type="ADMIN_WEB",
-        roles=["SUPERADMIN"],
+        roles=["SUPER_ADMIN"],
         allowed_apps=["ADMIN_WEB"]
     )
     

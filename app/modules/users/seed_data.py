@@ -78,44 +78,58 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
     # - AC: Admin Company
     # - AGS: Admin Gas Station
     # - SO: Sales Officer
-    default_password_hash = get_password_hash("Password123")
+    default_password_hash = get_password_hash("mysuf123")
     
     users_data = [
         {
-            "name": "Super Admin (SA)",
-            "email": "sa@mysuf.com",
+            "name": "Super Admin",
+            "email": "super.admin@mysuf.id",
             "password": default_password_hash,
-            "role": [UserRole.SUPERADMIN],
+            "role": [UserRole.SUPER_ADMIN],
             "company_id": None,
             "gas_station_id": None,
-            "employee_id": "EMP-SA-001"
+            "employee_id": "EMP-SA-001",
+            "shift": None
         },
         {
-            "name": "Admin Company (AC)",
-            "email": "ac@mysuf.com",
+            "name": "SPBU Admin",
+            "email": "spbu.admin@mysuf.id",
             "password": default_password_hash,
-            "role": [UserRole.ADMIN_COMPANY],
-            "company_id": company.id,
-            "gas_station_id": None,
-            "employee_id": "EMP-AC-001"
-        },
-        {
-            "name": "Admin Gas Station (AGS)",
-            "email": "ags@mysuf.com",
-            "password": default_password_hash,
-            "role": [UserRole.ADMIN_GAS_STATION],
+            "role": [UserRole.SPBU_ADMIN],
             "company_id": None,
             "gas_station_id": gas_station.id,
-            "employee_id": "EMP-AGS-001"
+            "employee_id": "EMP-SPBU-001",
+            "shift": "Morning (06:00 - 14:00)"
         },
         {
-            "name": "Sales Officer (SO)",
-            "email": "so@mysuf.com",
+            "name": "Fleet Admin",
+            "email": "fleet.admin@mysuf.id",
+            "password": default_password_hash,
+            "role": [UserRole.COMPANY_ADMIN],
+            "company_id": company.id,
+            "gas_station_id": None,
+            "employee_id": "EMP-AC-001",
+            "shift": None
+        },
+        {
+            "name": "Government Admin",
+            "email": "gov.admin@mysuf.id",
+            "password": default_password_hash,
+            "role": [UserRole.GOV_ADMIN],
+            "company_id": None,
+            "gas_station_id": None,
+            "employee_id": "EMP-GOV-001",
+            "shift": None
+        },
+        {
+            "name": "Sales Officer",
+            "email": "so@mysuf.id",
             "password": default_password_hash,
             "role": [UserRole.SALES_OFFICER],
             "company_id": None,
             "gas_station_id": gas_station.id,
-            "employee_id": "EMP-SO-001"
+            "employee_id": "EMP-SO-001",
+            "shift": "Afternoon (14:00 - 22:00)"
         }
     ]
 
@@ -135,11 +149,14 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
                 company_id=data["company_id"],
                 gas_station_id=data["gas_station_id"],
                 employee_id=data["employee_id"],
+                shift=data.get("shift"),
                 is_active=True
             )
             session.add(user)
             summary["created"] += 1
         else:
+            # If user already exists, update their shift as well if needed
+            existing_user.shift = data.get("shift")
             summary["existing"] += 1
 
     await session.commit()

@@ -141,7 +141,7 @@ def upgrade() -> None:
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('email', sa.String(), nullable=False),
     sa.Column('password', sa.String(), nullable=False),
-    sa.Column('role', postgresql.ARRAY(sa.Enum('SUPERADMIN', 'ADMIN_GAS_STATION', 'ADMIN_COMPANY', 'BUYER', name='user_role_enum')), nullable=False),
+    sa.Column('role', postgresql.ARRAY(sa.Enum('SUPER_ADMIN', 'SPBU_ADMIN', 'GOV_ADMIN', 'COMPANY_ADMIN', 'BUYER', name='user_role_enum')), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.Column('timestamp', sa.DateTime(), nullable=True),
     sa.Column('employee_id', sa.String(), nullable=True),

@@ -63,15 +63,15 @@ class UserService:
             user_in.company_id = None
             user_in.gas_station_id = None
         else:
-            if has_role(current_user, UserRole.SUPERADMIN):
+            if has_role(current_user, UserRole.SUPER_ADMIN):
                 pass # Can create any role
-            elif has_role(current_user, UserRole.ADMIN_GAS_STATION):
+            elif has_role(current_user, UserRole.SPBU_ADMIN):
                 if UserRole.SALES_OFFICER not in user_in.role:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gas Station Admin can only create SALES_OFFICER accounts")
                 # Force link to their gas station
                 user_in.gas_station_id = current_user.gas_station_id
                 user_in.company_id = None
-            elif has_role(current_user, UserRole.ADMIN_COMPANY):
+            elif has_role(current_user, UserRole.COMPANY_ADMIN):
                 if UserRole.BUYER not in user_in.role:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company Admin can only create BUYER accounts")
                 # Force link to their company
@@ -88,7 +88,8 @@ class UserService:
             is_active=user_in.is_active,
             employee_id=user_in.employee_id,
             gas_station_id=user_in.gas_station_id,
-            company_id=user_in.company_id
+            company_id=user_in.company_id,
+            shift=user_in.shift
         )
         return await self.repo.create_user(db_user)
 
@@ -96,24 +97,28 @@ class UserService:
         user = await self.get_user(user_id)
 
         # RBAC checks
-        is_superuser = has_role(current_user, UserRole.SUPERADMIN)
+        is_superuser = has_role(current_user, UserRole.SUPER_ADMIN)
         is_self = str(current_user.id) == user_id
-        is_gas_station_admin = has_role(current_user, UserRole.ADMIN_GAS_STATION)
+        is_gas_station_admin = has_role(current_user, UserRole.SPBU_ADMIN)
         
         if not (is_superuser or is_self or is_gas_station_admin):
              raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough privileges to edit this user")
 
         if is_gas_station_admin and not is_superuser:
-            # "Admin gas station bisa link akun buyer agar menjadi sales_officer"
-            # They can only modify a BUYER, add SALES_OFFICER, and set gas_station_id
-            if UserRole.BUYER not in user.role:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gas Station Admin can only modify BUYER accounts")
-            
-            # Ensure they are only adding SALES_OFFICER and linking to their station
-            if user_in.role is not None and UserRole.SALES_OFFICER in user_in.role:
-                user_in.gas_station_id = current_user.gas_station_id
+            # If the user belongs to the admin's gas station, allow editing
+            if user.gas_station_id == current_user.gas_station_id:
+                pass
             else:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gas Station Admin can only grant SALES_OFFICER role")
+                # "Admin gas station bisa link akun buyer agar menjadi sales_officer"
+                # They can only modify a BUYER, add SALES_OFFICER, and set gas_station_id
+                if UserRole.BUYER not in user.role:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gas Station Admin can only modify BUYER accounts")
+                
+                # Ensure they are only adding SALES_OFFICER and linking to their station
+                if user_in.role is not None and UserRole.SALES_OFFICER in user_in.role:
+                    user_in.gas_station_id = current_user.gas_station_id
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Gas Station Admin can only grant SALES_OFFICER role")
 
         # Prevent normal users from escalating roles
         if not is_superuser and not is_gas_station_admin and user_in.role is not None:
@@ -129,7 +134,7 @@ class UserService:
         return await self.repo.update_user(user)
 
     async def delete_user(self, user_id: str, current_user: User) -> None:
-        if not has_role(current_user, UserRole.SUPERADMIN):
+        if not has_role(current_user, UserRole.SUPER_ADMIN):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only superadmin can delete users")
             
         user = await self.get_user(user_id)
@@ -446,7 +451,7 @@ class UserService:
         year: int,
     ) -> dict[str, float | int] | None:
         latest_eligibility = await self._get_latest_personal_eligibility(buyer_profile)
-        if latest_eligibility is not None and latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
+        if latest_eligibility is None or latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
             return None
 
         quota = await self.subsidy_service.get_or_sync_personal_quota(
@@ -531,7 +536,7 @@ class UserService:
             if eligibility:
                 is_eligible = eligibility.eligibility_status == EligibilityStatus.ELIGIBLE
             else:
-                is_eligible = is_verified
+                is_eligible = False
 
             # vehiclesCount
             vehicles_result = await db.execute(
@@ -697,3 +702,51 @@ class UserService:
         await self.repo.db.commit()
         await self.repo.db.refresh(user)
         return {"message": "Token perangkat berhasil didaftarkan."}
+
+    @staticmethod
+    def update_user_fraud_status(user: User, risk_score: float) -> None:
+        """
+        Updates the user's is_blocked and frozen_until fields dynamically
+        based on the risk score classification tiers.
+        """
+        from datetime import datetime, timedelta
+        if risk_score > 100:
+            user.is_blocked = True
+            user.frozen_until = None
+        elif risk_score >= 61:
+            user.is_blocked = False
+            # Smart calculation of frozen duration
+            if risk_score >= 91:
+                user.frozen_until = datetime.utcnow() + timedelta(days=14)
+            elif risk_score >= 81:
+                user.frozen_until = datetime.utcnow() + timedelta(days=7)
+            elif risk_score >= 71:
+                user.frozen_until = datetime.utcnow() + timedelta(days=3)
+            else:
+                user.frozen_until = datetime.utcnow() + timedelta(days=1)
+        else:
+            user.is_blocked = False
+            user.frozen_until = None
+
+    @staticmethod
+    def check_user_fraud_status(user: User) -> None:
+        """
+        Raises an HTTP exception if the user is blocked or frozen.
+        """
+        from datetime import datetime
+        if getattr(user, "is_blocked", False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Akun Anda diblokir secara permanen oleh sistem keamanan karena skor risiko kritis."
+            )
+        
+        frozen_until = getattr(user, "frozen_until", None)
+        if frozen_until and frozen_until > datetime.utcnow():
+            remaining = frozen_until - datetime.utcnow()
+            hours = int(remaining.total_seconds() // 3600)
+            minutes = int((remaining.total_seconds() % 3600) // 60)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Akun Anda dibekukan sementara hingga {frozen_until.strftime('%Y-%m-%d %H:%M:%S')} UTC. Tersisa {hours} jam {minutes} menit."
+            )
+

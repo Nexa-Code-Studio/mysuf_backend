@@ -14,6 +14,7 @@ class UserBase(BaseModel):
     employee_id: Optional[str] = None
     gas_station_id: Optional[UUID] = None
     company_id: Optional[UUID] = None
+    shift: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -27,6 +28,7 @@ class UserUpdate(BaseModel):
     employee_id: Optional[str] = None
     gas_station_id: Optional[UUID] = None
     company_id: Optional[UUID] = None
+    shift: Optional[str] = None
 
 class UserResponse(UserBase):
     id: UUID

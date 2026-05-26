@@ -341,3 +341,45 @@ class CashierPerformanceSummaryResponse(BaseModel):
 class CashierPerformanceResponse(BaseModel):
     summary: CashierPerformanceSummaryResponse
     recent_transactions: list[CashierTransactionListItemResponse]
+
+
+class FraudLogResponse(BaseModel):
+    id: UUID
+    case_id: str
+    fuel_transaction_id: UUID | None = None
+    gas_station_id: UUID
+    gas_station_name: str
+    buyer_profile_id: UUID | None = None
+    buyer_name: str | None = None
+    vehicle_ownership_id: UUID | None = None
+    plate_number_snapshot: str
+    nik_snapshot: str | None = None
+    risk_score: int
+    risk_level: str
+    action_taken: str
+    detected_frauds: List[dict] = []
+    status: str
+    resolution_notes: str | None = None
+    resolved_by_name: str | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FraudLogStatusStats(BaseModel):
+    total: int
+    suspicious: int
+    high_risk: int
+    critical: int
+
+
+class FraudLogListResponse(BaseModel):
+    stats: FraudLogStatusStats
+    items: List[FraudLogResponse]
+    total_count: int
+
+
+class FraudLogStatusUpdateRequest(BaseModel):
+    status: str
+    resolution_notes: str | None = None
