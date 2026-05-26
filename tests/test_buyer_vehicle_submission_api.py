@@ -192,7 +192,7 @@ async def test_buyer_ojol_vehicle_submission_creates_pending_request():
                 headers={"Authorization": f"Bearer {token}"},
                 data={
                     "registration_number": registry_vehicle.registration_number,
-                    "usage_type": "OJOL",
+                    "usage_type": "COMMERCIAL_MOTORCYCLE",
                 },
                 files={
                     "stnk_photo": ("stnk.jpg", b"fake-stnk-image", "image/jpeg"),

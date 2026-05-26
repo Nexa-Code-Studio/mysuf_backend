@@ -8,9 +8,10 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 class UserRole(str, enum.Enum):
-    SUPERADMIN = "SUPERADMIN"
-    ADMIN_GAS_STATION = "ADMIN_GAS_STATION"
-    ADMIN_COMPANY = "ADMIN_COMPANY"
+    SUPER_ADMIN = "SUPER_ADMIN"
+    SPBU_ADMIN = "SPBU_ADMIN"
+    GOV_ADMIN = "GOV_ADMIN"
+    COMPANY_ADMIN = "COMPANY_ADMIN"
     SALES_OFFICER = "SALES_OFFICER"
     BUYER = "BUYER"
 
@@ -29,12 +30,15 @@ class User(Base):
     password = Column(String, nullable=False)
     role = Column(ARRAY(Enum(UserRole, name="user_role_enum", create_type=False)), nullable=False) # We will rely on postgres creating the array
     is_active = Column(Boolean, default=True)
+    is_blocked = Column(Boolean, default=False, nullable=False)
+    frozen_until = Column(DateTime, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     employee_id = Column(String, nullable=True)
     fcm_token = Column(String, nullable=True)
     gas_station_id = Column(UUID(as_uuid=True), ForeignKey("gas_stations.id"), nullable=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
+    shift = Column(String, nullable=True)
 
     buyer_profile = relationship("BuyerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     assigned_vehicles = relationship("VehicleOwnership", back_populates="assigned_user")

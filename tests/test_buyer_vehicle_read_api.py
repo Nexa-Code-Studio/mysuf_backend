@@ -128,7 +128,7 @@ async def test_buyer_vehicle_list_and_detail_use_buyer_profile_ktp_snapshot_and_
                 owner_id=uuid4(),
                 vehicle_id=other_registry_vehicle.id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.OJOL,
+                usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=other_registry_vehicle.plate_number,
                 ktp_nfc_id_snapshot="NFC-OTHER-0001",
@@ -138,7 +138,7 @@ async def test_buyer_vehicle_list_and_detail_use_buyer_profile_ktp_snapshot_and_
                 owner_id=buyer_profile.id,
                 vehicle_id=commercial_registry_vehicle.id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.OJOL,
+                usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=commercial_registry_vehicle.plate_number,
                 ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
@@ -220,7 +220,7 @@ async def test_buyer_vehicle_list_and_detail_use_buyer_profile_ktp_snapshot_and_
             )
             assert commercial_detail_res.status_code == 200
             commercial_detail_body = commercial_detail_res.json()
-            assert commercial_detail_body["usage_type"] == "OJOL"
+            assert commercial_detail_body["usage_type"] == "COMMERCIAL_MOTORCYCLE"
             assert commercial_detail_body["quota_liters"] == 225.0
             assert commercial_detail_body["used_liters"] == 70.0
             assert commercial_detail_body["remaining_liters"] == 155.0

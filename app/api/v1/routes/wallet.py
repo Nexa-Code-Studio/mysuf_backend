@@ -57,7 +57,7 @@ async def create_topup(
 @router.get("/sessions/{session_id}", response_model=TopUpResponse)
 async def sync_session(
     session_id: str,
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
     """

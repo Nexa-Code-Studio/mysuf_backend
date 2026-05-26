@@ -18,7 +18,7 @@ router = APIRouter()
 async def read_users(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
     """
@@ -200,7 +200,7 @@ async def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    current_user: User = Depends(require_roles([UserRole.SUPERADMIN])),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> None:
     """
@@ -208,3 +208,53 @@ async def delete_user(
     """
     service = UserService(db)
     await service.delete_user(user_id=user_id, current_user=current_user)
+
+@router.get("/gas-stations/options")
+async def get_gas_stations_options(
+    query: str = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    from app.modules.gas_stations.models import GasStation
+    from sqlalchemy.future import select
+    from sqlalchemy import func
+    stmt = select(GasStation)
+    if query:
+        stmt = stmt.filter(GasStation.name.ilike(f"%{query}%"))
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    stations = result.scalars().all()
+    return {
+        "items": [{"id": str(s.id), "name": s.name} for s in stations],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
+
+@router.get("/companies/options")
+async def get_companies_options(
+    query: str = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    from app.modules.companies.models import Company
+    from sqlalchemy.future import select
+    from sqlalchemy import func
+    stmt = select(Company)
+    if query:
+        stmt = stmt.filter(Company.name.ilike(f"%{query}%"))
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = (await db.execute(count_stmt)).scalar() or 0
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(stmt)
+    companies = result.scalars().all()
+    return {
+        "items": [{"id": str(c.id), "name": c.name} for c in companies],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }

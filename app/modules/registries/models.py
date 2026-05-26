@@ -1,10 +1,16 @@
+import enum
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Column, String, DateTime, Numeric, Integer, ForeignKey, Index
+from sqlalchemy import Column, String, DateTime, Numeric, Integer, ForeignKey, Index, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+
+class VehicleClass(str, enum.Enum):
+    MOTORCYCLE = "MOTORCYCLE"
+    CAR = "CAR"
+    TRUCK = "TRUCK"
 
 class KK(Base):
     __tablename__ = "kk"
@@ -68,6 +74,8 @@ class VehicleRegistryMockup(Base):
 
     owner_name = Column(String, nullable=True)
     owner_nik = Column(String, nullable=True)
+
+    jenis = Column(Enum(VehicleClass, name="vehicle_class_enum"), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -133,7 +133,7 @@ async def test_cashier_can_lookup_buyer_and_vehicles_by_nfc_id():
                 owner_id=buyer_profile.id,
                 vehicle_id=vehicle_b.id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.OJOL,
+                usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=vehicle_b.plate_number,
                 ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
@@ -198,7 +198,7 @@ async def test_cashier_can_lookup_buyer_and_vehicles_by_nfc_id():
         assert ojol_vehicle["registration_number"] == vehicle_b.registration_number
         assert ojol_vehicle["type_label"] == "Honda - Vario"
         assert ojol_vehicle["category"] == "commercial"
-        assert ojol_vehicle["usage_type"] == "OJOL"
+        assert ojol_vehicle["usage_type"] == "COMMERCIAL_MOTORCYCLE"
     finally:
         async with AsyncSessionLocal() as session:
             await session.execute(

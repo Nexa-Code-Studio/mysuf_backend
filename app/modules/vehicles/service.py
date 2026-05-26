@@ -399,6 +399,10 @@ class VehicleService:
                 VehicleUsageType.PERSONAL,
                 VehicleUsageType.OJOL,
                 VehicleUsageType.UMKM,
+                VehicleUsageType.COMPANY_OPERATIONAL,
+                VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+                VehicleUsageType.COMMERCIAL_CAR,
+                VehicleUsageType.COMMERCIAL_TRUCK,
             }:
                 await self._recompute_kk_subsidy_eligibility(request.buyer_profile_id)
 
@@ -629,6 +633,10 @@ class VehicleService:
                 VehicleUsageType.PERSONAL,
                 VehicleUsageType.OJOL,
                 VehicleUsageType.UMKM,
+                VehicleUsageType.COMPANY_OPERATIONAL,
+                VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+                VehicleUsageType.COMMERCIAL_CAR,
+                VehicleUsageType.COMMERCIAL_TRUCK,
             }:
                 buyer_profile = await self.repo.get_buyer_profile_by_id(parsed_owner_id)
                 if buyer_profile is not None:
@@ -661,11 +669,7 @@ class VehicleService:
         vehicle_photo: UploadFile,
         productive_business_proof: UploadFile | None = None,
     ) -> dict:
-        if usage_type == VehicleUsageType.COMPANY_OPERATIONAL:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="COMPANY_OPERATIONAL vehicles cannot be submitted from buyer app.",
-            )
+        # Company owned operational vehicles are not submitted via the buyer portal
 
         buyer_profile = await self.repo.get_buyer_profile_by_user_id(current_user.id)
         if not buyer_profile:
@@ -806,10 +810,17 @@ class VehicleService:
         usage_type: VehicleUsageType,
         productive_business_proof: UploadFile | None,
     ) -> None:
-        if usage_type in {VehicleUsageType.OJOL, VehicleUsageType.UMKM} and productive_business_proof is None:
+        if usage_type in {
+            VehicleUsageType.OJOL,
+            VehicleUsageType.UMKM,
+            VehicleUsageType.COMPANY_OPERATIONAL,
+            VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+            VehicleUsageType.COMMERCIAL_CAR,
+            VehicleUsageType.COMMERCIAL_TRUCK,
+        } and productive_business_proof is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Productive business proof is required for OJOL and UMKM vehicles.",
+                detail="Productive business proof is required for commercial vehicles.",
             )
 
     async def _validate_image_upload(self, upload: UploadFile, label: str) -> None:
@@ -1031,6 +1042,9 @@ class VehicleService:
             VehicleUsageType.OJOL,
             VehicleUsageType.UMKM,
             VehicleUsageType.COMPANY_OPERATIONAL,
+            VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+            VehicleUsageType.COMMERCIAL_CAR,
+            VehicleUsageType.COMMERCIAL_TRUCK,
         }:
             return {
                 "quota_liters": None,
@@ -1106,7 +1120,7 @@ class VehicleService:
         unique_vehicle_ids: set[UUID] = set()
         total_njkb = Decimal("0")
         for ownership in ownerships:
-            if ownership.usage_type == VehicleUsageType.COMPANY_OPERATIONAL:
+            if ownership.owner_type == VehicleOwnerType.COMPANY:
                 continue
             if ownership.vehicle_id in unique_vehicle_ids:
                 continue
@@ -1148,3 +1162,188 @@ class VehicleService:
 
     def _is_account_suspended(self, risk_score: Decimal) -> bool:
         return risk_score > Decimal("85")
+
+    async def get_all_vehicle_requests_admin(self) -> list:
+        from app.modules.vehicles.schemas import AdminVehicleRequestResponse, VehicleOwnershipDocumentResponse
+        requests = await self.repo.get_all_vehicle_ownership_requests()
+        results = []
+        for req in requests:
+            buyer_profile = req.buyer_profile
+            buyer_name = ""
+            buyer_nik = ""
+            if buyer_profile:
+                buyer_nik = buyer_profile.nik_snapshot
+                if buyer_profile.user:
+                    buyer_name = buyer_profile.user.name
+            
+            results.append(
+                AdminVehicleRequestResponse(
+                    id=req.id,
+                    buyer_profile_id=req.buyer_profile_id,
+                    buyer_name=buyer_name,
+                    buyer_nik=buyer_nik,
+                    vehicle_id=req.vehicle_id,
+                    ownership_status=req.ownership_status,
+                    usage_type=req.usage_type,
+                    quota_mode=req.quota_mode,
+                    plate_number_snapshot=req.plate_number_snapshot,
+                    ktp_nfc_id_snapshot=req.ktp_nfc_id_snapshot,
+                    status=req.status,
+                    review_note=req.review_note,
+                    submitted_at=req.submitted_at,
+                    reviewed_at=req.reviewed_at,
+                    documents=[
+                        VehicleOwnershipDocumentResponse.model_validate(doc)
+                        for doc in req.documents
+                    ]
+                )
+            )
+        return results
+
+    async def stream_vehicle_ownership_request_document_admin(
+        self,
+        request_id: str,
+        document_id: str,
+    ) -> FileResponse:
+        document = await self.repo.get_vehicle_ownership_request_document_by_id(document_id)
+        if not document or str(document.vehicle_ownership_request_id) != str(request_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle ownership request document not found")
+
+        file_path = self.REQUEST_STORAGE_ROOT / document.storage_key
+        if not file_path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored vehicle ownership request document file not found")
+
+        return FileResponse(
+            path=file_path,
+            media_type=document.mime_type or "application/octet-stream",
+            filename=document.original_filename or file_path.name,
+        )
+
+    async def verify_vehicle_request_admin(
+        self,
+        request_id: str,
+        status_str: str,
+        review_note: str | None = None,
+    ) -> dict:
+        request = await self.repo.get_vehicle_ownership_request_by_id(request_id)
+        if not request:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Vehicle ownership request not found.",
+            )
+
+        if request.status in {VehicleOwnershipRequestStatus.APPROVED, VehicleOwnershipRequestStatus.REJECTED}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Vehicle ownership request was already processed as {request.status.value}.",
+            )
+
+        if status_str == "APPROVED":
+            # Validate vehicle class against usage type
+            from app.modules.registries.models import VehicleClass
+            registry_vehicle = await self.repo.get_vehicle_registry_by_id(request.vehicle_id)
+            if registry_vehicle:
+                if request.usage_type == VehicleUsageType.COMMERCIAL_MOTORCYCLE:
+                    if registry_vehicle.jenis != VehicleClass.MOTORCYCLE:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="COMMERCIAL_MOTORCYCLE usage registration requires a motorcycle vehicle class."
+                        )
+                elif request.usage_type == VehicleUsageType.COMMERCIAL_CAR:
+                    if registry_vehicle.jenis != VehicleClass.CAR:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="COMMERCIAL_CAR usage registration requires a car vehicle class."
+                        )
+                elif request.usage_type == VehicleUsageType.COMMERCIAL_TRUCK:
+                    if registry_vehicle.jenis != VehicleClass.TRUCK:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="COMMERCIAL_TRUCK usage registration requires a truck vehicle class."
+                        )
+
+            final_storage_dir: Path | None = None
+            try:
+                ownership = VehicleOwnership(
+                    owner_type=VehicleOwnerType.BUYER_PROFILE,
+                    owner_id=request.buyer_profile_id,
+                    vehicle_id=request.vehicle_id,
+                    ownership_status=request.ownership_status,
+                    usage_type=request.usage_type,
+                    quota_mode=request.quota_mode,
+                    plate_number_snapshot=request.plate_number_snapshot,
+                    ktp_nfc_id_snapshot=request.ktp_nfc_id_snapshot,
+                )
+                await self.repo.create_vehicle_ownership(ownership)
+
+                final_storage_dir = self.STORAGE_ROOT / str(ownership.id)
+                final_storage_dir.mkdir(parents=True, exist_ok=True)
+
+                copied_documents = []
+                for request_document in request.documents:
+                    copied_documents.append(
+                        self._copy_request_document_to_ownership(
+                            ownership_id=ownership.id,
+                            request_id=request.id,
+                            request_document=request_document,
+                            final_storage_dir=final_storage_dir,
+                        )
+                    )
+
+                await self.repo.add_documents(copied_documents)
+
+                request.status = VehicleOwnershipRequestStatus.APPROVED
+                request.approved_vehicle_ownership_id = ownership.id
+                request.review_note = review_note
+                request.reviewed_at = self._utcnow()
+
+                if request.usage_type in {
+                    VehicleUsageType.PERSONAL,
+                    VehicleUsageType.OJOL,
+                    VehicleUsageType.UMKM,
+                    VehicleUsageType.COMPANY_OPERATIONAL,
+                    VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+                    VehicleUsageType.COMMERCIAL_CAR,
+                    VehicleUsageType.COMMERCIAL_TRUCK,
+                }:
+                    await self._recompute_kk_subsidy_eligibility(request.buyer_profile_id)
+
+                await self.repo.commit()
+            except HTTPException:
+                await self.repo.rollback()
+                self._cleanup_storage_dir(final_storage_dir)
+                raise
+            except Exception:
+                await self.repo.rollback()
+                self._cleanup_storage_dir(final_storage_dir)
+                raise
+
+            return {
+                "request_id": request.id,
+                "status": request.status.value,
+                "approved_vehicle_ownership_id": ownership.id,
+                "message": "Vehicle ownership request approved and final ownership created.",
+            }
+
+        elif status_str == "REJECTED":
+            try:
+                request.status = VehicleOwnershipRequestStatus.REJECTED
+                request.review_note = review_note
+                request.reviewed_at = self._utcnow()
+                await self.repo.commit()
+            except Exception:
+                await self.repo.rollback()
+                raise
+
+            return {
+                "request_id": request.id,
+                "status": request.status.value,
+                "approved_vehicle_ownership_id": None,
+                "message": "Vehicle ownership request rejected by admin.",
+            }
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification status. Must be APPROVED or REJECTED.",
+            )

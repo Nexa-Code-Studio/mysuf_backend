@@ -153,7 +153,7 @@ async def test_buyer_family_overview_pending_list_and_document_streams():
                 owner_id=buyer_profile_b.id,
                 vehicle_id=shared_registry_vehicle.id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.UMKM,
+                usage_type=VehicleUsageType.COMMERCIAL_CAR,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=shared_registry_vehicle.plate_number,
                 ktp_nfc_id_snapshot=buyer_profile_b.ktp_nfc_id_snapshot,
@@ -174,7 +174,7 @@ async def test_buyer_family_overview_pending_list_and_document_streams():
                 buyer_profile_id=buyer_profile_a.id,
                 vehicle_id=pending_registry_vehicle.id,
                 ownership_status=VehicleOwnershipStatus.PERSONAL,
-                usage_type=VehicleUsageType.OJOL,
+                usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=pending_registry_vehicle.plate_number,
                 ktp_nfc_id_snapshot=buyer_profile_a.ktp_nfc_id_snapshot,
@@ -257,7 +257,7 @@ async def test_buyer_family_overview_pending_list_and_document_streams():
             assert pending_detail_res.status_code == 200
             pending_detail_body = pending_detail_res.json()
             assert pending_detail_body["request_id"] == str(ids["pending_request_id"])
-            assert pending_detail_body["usage_type"] == "OJOL"
+            assert pending_detail_body["usage_type"] == "COMMERCIAL_MOTORCYCLE"
             assert len(pending_detail_body["documents"]) == 1
 
             final_doc_res = await ac.get(
@@ -289,7 +289,7 @@ async def test_buyer_family_overview_pending_list_and_document_streams():
             )
             assert approved_detail_res.status_code == 200
             approved_detail_body = approved_detail_res.json()
-            assert approved_detail_body["usage_type"] == "OJOL"
+            assert approved_detail_body["usage_type"] == "COMMERCIAL_MOTORCYCLE"
             assert len(approved_detail_body["documents"]) == 1
 
             approved_doc_res = await ac.get(

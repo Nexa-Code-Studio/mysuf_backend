@@ -11,7 +11,7 @@ def build_access_contexts(user: User) -> List[dict]:
     contexts = []
     
     for role in user.role:
-        if role == UserRole.SUPERADMIN:
+        if role in [UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN]:
             contexts.append({
                 "role": role,
                 "scope_type": "GLOBAL",
@@ -19,7 +19,7 @@ def build_access_contexts(user: User) -> List[dict]:
                 "gas_station_id": None,
                 "buyer_profile_id": None
             })
-        elif role == UserRole.ADMIN_COMPANY:
+        elif role == UserRole.COMPANY_ADMIN:
             if user.company_id:
                 contexts.append({
                     "role": role,
@@ -28,7 +28,7 @@ def build_access_contexts(user: User) -> List[dict]:
                     "gas_station_id": None,
                     "buyer_profile_id": None
                 })
-        elif role == UserRole.ADMIN_GAS_STATION:
+        elif role == UserRole.SPBU_ADMIN:
             if user.gas_station_id:
                 contexts.append({
                     "role": role,
@@ -61,7 +61,7 @@ def build_access_contexts(user: User) -> List[dict]:
 def get_allowed_apps(roles: List[UserRole]) -> List[str]:
     apps = set()
     
-    if any(r in roles for r in [UserRole.SUPERADMIN, UserRole.ADMIN_COMPANY, UserRole.ADMIN_GAS_STATION]):
+    if any(r in roles for r in [UserRole.SUPER_ADMIN, UserRole.COMPANY_ADMIN, UserRole.SPBU_ADMIN, UserRole.GOV_ADMIN]):
         apps.add("ADMIN_WEB")
         
     if UserRole.SALES_OFFICER in roles:
@@ -74,11 +74,13 @@ def get_allowed_apps(roles: List[UserRole]) -> List[str]:
 
 def validate_client_access(user: User, client_type: str) -> bool:
     if client_type == "ADMIN_WEB":
-        if has_role(user, UserRole.SUPERADMIN):
+        if has_role(user, UserRole.SUPER_ADMIN):
             return True
-        if has_role(user, UserRole.ADMIN_COMPANY) and user.company_id is not None:
+        if has_role(user, UserRole.COMPANY_ADMIN) and user.company_id is not None:
             return True
-        if has_role(user, UserRole.ADMIN_GAS_STATION) and user.gas_station_id is not None:
+        if has_role(user, UserRole.SPBU_ADMIN) and user.gas_station_id is not None:
+            return True
+        if has_role(user, UserRole.GOV_ADMIN):
             return True
         return False
         

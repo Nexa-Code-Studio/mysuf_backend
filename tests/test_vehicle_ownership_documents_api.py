@@ -26,7 +26,7 @@ async def test_create_vehicle_ownership_with_documents_stores_files_and_metadata
                     "owner_id": str(uuid4()),
                     "vehicle_id": str(uuid4()),
                     "ownership_status": "PERSONAL",
-                    "usage_type": "OJOL",
+                    "usage_type": "COMMERCIAL_MOTORCYCLE",
                     "quota_mode": "DEDICATED_VEHICLE_QUOTA",
                     "plate_number_snapshot": "B 1234 TEST",
                     "ktp_nfc_id_snapshot": "NFC-TEST-1234",
@@ -41,7 +41,7 @@ async def test_create_vehicle_ownership_with_documents_stores_files_and_metadata
         assert res.status_code == 201
         body = res.json()
         ownership_id = body["id"]
-        assert body["usage_type"] == "OJOL"
+        assert body["usage_type"] == "COMMERCIAL_MOTORCYCLE"
         assert body["quota_mode"] == "DEDICATED_VEHICLE_QUOTA"
         assert len(body["documents"]) == 3
 
@@ -75,7 +75,7 @@ async def test_create_vehicle_ownership_requires_productive_business_proof_for_o
                 "owner_id": str(uuid4()),
                 "vehicle_id": str(uuid4()),
                 "ownership_status": "PERSONAL",
-                "usage_type": "OJOL",
+                "usage_type": "COMMERCIAL_MOTORCYCLE",
                 "quota_mode": "DEDICATED_VEHICLE_QUOTA",
                 "plate_number_snapshot": "B 9999 TEST",
                 "ktp_nfc_id_snapshot": "NFC-TEST-9999",
@@ -87,4 +87,4 @@ async def test_create_vehicle_ownership_requires_productive_business_proof_for_o
         )
 
     assert res.status_code == 400
-    assert res.json()["detail"] == "Productive business proof is required for OJOL and UMKM vehicles."
+    assert res.json()["detail"] == "Productive business proof is required for commercial vehicles."

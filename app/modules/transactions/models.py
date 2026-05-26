@@ -1,8 +1,8 @@
 import enum
 from datetime import datetime
 from uuid_extensions import uuid7
-from sqlalchemy import Column, String, DateTime, Enum, Numeric, Boolean, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Enum, Numeric, Boolean, ForeignKey, Index, Text, Integer
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -167,6 +167,8 @@ class FuelTransaction(Base):
     kk_subsidy_eligibility = relationship("KKSubsidyEligibility", back_populates="fuel_transactions")
     wallet_transaction = relationship("WalletTransaction", back_populates="fuel_transactions")
     payment_transactions = relationship("PaymentTransaction", back_populates="fuel_transaction")
+    verified_by = relationship("User", foreign_keys=[verified_by_user_id])
+
 
 
 class CashierScanEvent(Base):
@@ -203,3 +205,61 @@ class WebhookAuditLog(Base):
     event_type = Column(String, nullable=False)
     payload = Column(String, nullable=False)  # Raw JSON payload
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FraudRiskLevel(str, enum.Enum):
+    SAFE = "SAFE"
+    SUSPICIOUS = "SUSPICIOUS"
+    HIGH_RISK = "HIGH_RISK"
+    CRITICAL = "CRITICAL"
+
+
+class FraudActionTaken(str, enum.Enum):
+    ALLOW_TRANSACTION = "ALLOW_TRANSACTION"
+    WARNING = "WARNING"
+    FREEZE_ACCOUNT = "FREEZE_ACCOUNT"
+    BLOCK_ACCOUNT = "BLOCK_ACCOUNT"
+
+
+class FraudCaseStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    FLAGGED = "FLAGGED"
+    RESOLVED = "RESOLVED"
+
+
+class FraudLog(Base):
+    __tablename__ = "fraud_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    case_id = Column(String(20), nullable=False, unique=True, index=True)
+    
+    # Foreign Keys
+    fuel_transaction_id = Column(UUID(as_uuid=True), ForeignKey("fuel_transactions.id"), nullable=True)
+    gas_station_id = Column(UUID(as_uuid=True), ForeignKey("gas_stations.id"), nullable=False)
+    buyer_profile_id = Column(UUID(as_uuid=True), ForeignKey("buyer_profiles.id"), nullable=True)
+    vehicle_ownership_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_ownerships.id"), nullable=True)
+    
+    # Snapshots (Integritas Data Historis)
+    plate_number_snapshot = Column(String(50), nullable=False)
+    nik_snapshot = Column(String(50), nullable=True)
+    
+    # AI Engine Results
+    risk_score = Column(Integer, nullable=False, default=0)
+    risk_level = Column(Enum(FraudRiskLevel, name="fraud_risk_level_enum"), nullable=False, default=FraudRiskLevel.SAFE)
+    action_taken = Column(Enum(FraudActionTaken, name="fraud_action_taken_enum"), nullable=False, default=FraudActionTaken.ALLOW_TRANSACTION)
+    detected_frauds = Column(JSONB, nullable=False, default=list) # Menyimpan detail pelanggaran spesifik
+    
+    # Workflow Status
+    status = Column(Enum(FraudCaseStatus, name="fraud_case_status_enum"), nullable=False, default=FraudCaseStatus.PENDING)
+    resolution_notes = Column(Text, nullable=True)
+    resolved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    fuel_transaction = relationship("FuelTransaction", foreign_keys=[fuel_transaction_id])
+    gas_station = relationship("GasStation", foreign_keys=[gas_station_id])
+    buyer_profile = relationship("BuyerProfile", foreign_keys=[buyer_profile_id])
+    vehicle_ownership = relationship("VehicleOwnership", foreign_keys=[vehicle_ownership_id])
+    resolved_by = relationship("User", foreign_keys=[resolved_by_user_id])

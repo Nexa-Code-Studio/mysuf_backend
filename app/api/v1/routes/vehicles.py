@@ -24,6 +24,8 @@ from app.modules.vehicles.schemas import (
     VehicleOwnershipResponse,
     VehicleOwnershipRequestStatusResponse,
     VehicleOwnershipUpdate,
+    AdminVehicleRequestResponse,
+    VehicleOwnershipRequestVerify,
 )
 from app.modules.vehicles.service import VehicleService
 
@@ -223,3 +225,41 @@ async def update_vehicle_ownership(
 ) -> Any:
     service = VehicleService(db)
     return await service.update_vehicle_ownership(ownership_id, ownership_in)
+
+
+@router.get("/admin/requests", response_model=list[AdminVehicleRequestResponse])
+async def list_admin_vehicle_requests(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
+) -> Any:
+    service = VehicleService(db)
+    return await service.get_all_vehicle_requests_admin()
+
+
+@router.get("/admin/submissions/{request_id}/documents/{document_id}")
+async def read_admin_vehicle_submission_document(
+    request_id: str,
+    document_id: str,
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    service = VehicleService(db)
+    return await service.stream_vehicle_ownership_request_document_admin(
+        request_id=request_id,
+        document_id=document_id,
+    )
+
+
+@router.put("/admin/requests/{request_id}/verify")
+async def verify_vehicle_request_admin(
+    request_id: str,
+    payload: VehicleOwnershipRequestVerify,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
+) -> Any:
+    service = VehicleService(db)
+    return await service.verify_vehicle_request_admin(
+        request_id=request_id,
+        status_str=payload.status,
+        review_note=payload.review_note,
+    )

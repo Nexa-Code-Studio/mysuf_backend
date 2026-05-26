@@ -11,6 +11,10 @@ from app.api.v1.routes import webhooks as webhook_routes
 from app.api.v1.routes import notifications as notification_routes
 from app.api.v1.routes import fuels as fuel_routes
 from app.api.v1.routes import cashier as cashier_routes
+from app.api.v1.routes import companies as company_routes
+from app.api.v1.routes import fraud_logs as fraud_logs_routes
+from app.api.v1.routes import spbu as spbu_routes
+from app.api.v1.routes import government as government_routes
 
 api_router = APIRouter()
 api_router.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
@@ -25,3 +29,8 @@ api_router.include_router(webhook_routes.router, prefix="/webhooks", tags=["webh
 api_router.include_router(notification_routes.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(fuel_routes.router, prefix="/fuels", tags=["fuels"])
 api_router.include_router(cashier_routes.router, prefix="/cashier", tags=["cashier"])
+api_router.include_router(company_routes.router, prefix="/companies", tags=["companies"])
+api_router.include_router(fraud_logs_routes.router, prefix="/fraud-logs", tags=["fraud-logs"])
+api_router.include_router(spbu_routes.router, prefix="/spbu", tags=["spbu"])
+api_router.include_router(government_routes.router, prefix="/government", tags=["government"])
+

@@ -57,7 +57,7 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
         owner_id=uuid4(),
         vehicle_id=uuid4(),
         ownership_status=VehicleOwnershipStatus.PERSONAL,
-        usage_type=VehicleUsageType.OJOL,
+        usage_type=VehicleUsageType.COMMERCIAL_MOTORCYCLE,
         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
         plate_number_snapshot="B 3001 TST",
         ktp_nfc_id_snapshot=f"NFC-OJL-{uuid4().hex[:8]}",
@@ -67,7 +67,7 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
         owner_id=uuid4(),
         vehicle_id=uuid4(),
         ownership_status=VehicleOwnershipStatus.PERSONAL,
-        usage_type=VehicleUsageType.UMKM,
+        usage_type=VehicleUsageType.COMMERCIAL_CAR,
         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
         plate_number_snapshot="B 3002 TST",
         ktp_nfc_id_snapshot=f"NFC-UMK-{uuid4().hex[:8]}",
@@ -77,7 +77,7 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
         owner_id=uuid4(),
         vehicle_id=uuid4(),
         ownership_status=VehicleOwnershipStatus.COMPANY,
-        usage_type=VehicleUsageType.COMPANY_OPERATIONAL,
+        usage_type=VehicleUsageType.COMMERCIAL_TRUCK,
         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
         plate_number_snapshot="B 3003 TST",
         ktp_nfc_id_snapshot=f"NFC-CMP-{uuid4().hex[:8]}",
@@ -120,9 +120,9 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
             assert summary["processed"] == 4
             assert summary["usage_types"] == {
                 "PERSONAL": 1,
-                "OJOL": 1,
-                "UMKM": 1,
-                "COMPANY_OPERATIONAL": 1,
+                "COMMERCIAL_MOTORCYCLE": 1,
+                "COMMERCIAL_CAR": 1,
+                "COMMERCIAL_TRUCK": 1,
             }
 
         async with AsyncSessionLocal() as session:

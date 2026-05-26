@@ -17,6 +17,9 @@ class VehicleUsageType(str, enum.Enum):
     OJOL = "OJOL"
     UMKM = "UMKM"
     COMPANY_OPERATIONAL = "COMPANY_OPERATIONAL"
+    COMMERCIAL_MOTORCYCLE = "COMMERCIAL_MOTORCYCLE"
+    COMMERCIAL_CAR = "COMMERCIAL_CAR"
+    COMMERCIAL_TRUCK = "COMMERCIAL_TRUCK"
 
 
 class VehicleQuotaMode(str, enum.Enum):

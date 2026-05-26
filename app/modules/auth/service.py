@@ -32,6 +32,9 @@ class AuthService:
         if not user.is_active:
             raise CredentialsException(detail="Inactive user")
             
+        from app.modules.users.service import UserService
+        UserService.check_user_fraud_status(user)
+            
         if not validate_client_access(user, request.client_type):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -55,6 +58,9 @@ class AuthService:
             raise CredentialsException(detail="User not found")
         if not user.is_active:
             raise CredentialsException(detail="Inactive user")
+            
+        from app.modules.users.service import UserService
+        UserService.check_user_fraud_status(user)
         if not validate_client_access(user, request.client_type):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
