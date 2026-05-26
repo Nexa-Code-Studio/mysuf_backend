@@ -29,7 +29,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", 
         "https://api.smkn1wringin.sch.id", 
-        "https://api.smkn1wringin.sch.id:3000"
+        "https://api.smkn1wringin.sch.id:3000",
+        "https://mysuf-web.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
