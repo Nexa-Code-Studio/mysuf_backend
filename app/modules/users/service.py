@@ -261,7 +261,7 @@ class UserService:
 
         ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(buyer_profile.ktp_nfc_id_snapshot)
         has_verified_vehicle = any(
-            ownership.usage_type != VehicleUsageType.COMPANY_OPERATIONAL
+            ownership.usage_type == VehicleUsageType.PERSONAL
             for ownership in ownerships
         )
 
