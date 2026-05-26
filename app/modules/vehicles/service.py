@@ -397,9 +397,6 @@ class VehicleService:
 
             if request.usage_type in {
                 VehicleUsageType.PERSONAL,
-                VehicleUsageType.OJOL,
-                VehicleUsageType.UMKM,
-                VehicleUsageType.COMPANY_OPERATIONAL,
                 VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 VehicleUsageType.COMMERCIAL_CAR,
                 VehicleUsageType.COMMERCIAL_TRUCK,
@@ -631,9 +628,6 @@ class VehicleService:
 
             if owner_type == VehicleOwnerType.BUYER_PROFILE and usage_type in {
                 VehicleUsageType.PERSONAL,
-                VehicleUsageType.OJOL,
-                VehicleUsageType.UMKM,
-                VehicleUsageType.COMPANY_OPERATIONAL,
                 VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                 VehicleUsageType.COMMERCIAL_CAR,
                 VehicleUsageType.COMMERCIAL_TRUCK,
@@ -811,9 +805,6 @@ class VehicleService:
         productive_business_proof: UploadFile | None,
     ) -> None:
         if usage_type in {
-            VehicleUsageType.OJOL,
-            VehicleUsageType.UMKM,
-            VehicleUsageType.COMPANY_OPERATIONAL,
             VehicleUsageType.COMMERCIAL_MOTORCYCLE,
             VehicleUsageType.COMMERCIAL_CAR,
             VehicleUsageType.COMMERCIAL_TRUCK,
@@ -1039,9 +1030,6 @@ class VehicleService:
     ) -> dict[str, float | None]:
         if ownership.usage_type not in {
             VehicleUsageType.PERSONAL,
-            VehicleUsageType.OJOL,
-            VehicleUsageType.UMKM,
-            VehicleUsageType.COMPANY_OPERATIONAL,
             VehicleUsageType.COMMERCIAL_MOTORCYCLE,
             VehicleUsageType.COMMERCIAL_CAR,
             VehicleUsageType.COMMERCIAL_TRUCK,
@@ -1299,9 +1287,6 @@ class VehicleService:
 
                 if request.usage_type in {
                     VehicleUsageType.PERSONAL,
-                    VehicleUsageType.OJOL,
-                    VehicleUsageType.UMKM,
-                    VehicleUsageType.COMPANY_OPERATIONAL,
                     VehicleUsageType.COMMERCIAL_MOTORCYCLE,
                     VehicleUsageType.COMMERCIAL_CAR,
                     VehicleUsageType.COMMERCIAL_TRUCK,
