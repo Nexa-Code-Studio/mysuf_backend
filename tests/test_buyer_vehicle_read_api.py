@@ -197,9 +197,9 @@ async def test_buyer_vehicle_list_and_detail_use_buyer_profile_ktp_snapshot_and_
             assert personal_item["quota_liters"] is None
             assert commercial_item["plate_number"] == "B 3333 COMM"
             assert commercial_item["category"] == "commercial"
-            assert commercial_item["quota_liters"] == 225.0
+            assert commercial_item["quota_liters"] == 90.0
             assert commercial_item["used_liters"] == 70.0
-            assert commercial_item["remaining_liters"] == 155.0
+            assert commercial_item["remaining_liters"] == 20.0
 
             detail_res = await ac.get(
                 f"/api/v1/vehicle-ownerships/{my_ownership_id}/detail",
@@ -221,9 +221,9 @@ async def test_buyer_vehicle_list_and_detail_use_buyer_profile_ktp_snapshot_and_
             assert commercial_detail_res.status_code == 200
             commercial_detail_body = commercial_detail_res.json()
             assert commercial_detail_body["usage_type"] == "COMMERCIAL_MOTORCYCLE"
-            assert commercial_detail_body["quota_liters"] == 225.0
+            assert commercial_detail_body["quota_liters"] == 90.0
             assert commercial_detail_body["used_liters"] == 70.0
-            assert commercial_detail_body["remaining_liters"] == 155.0
+            assert commercial_detail_body["remaining_liters"] == 20.0
 
             forbidden_detail_res = await ac.get(
                 f"/api/v1/vehicle-ownerships/{other_ownership_id}/detail",

@@ -9,7 +9,7 @@ from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.modules.users.models import User, UserRole
 from app.modules.gas_stations.models import GasStation
-from app.modules.vehicles.models import FuelType
+from app.modules.fuels.models import FuelType
 from app.modules.transactions.models import (
     FuelTransaction, 
     FuelTransactionStatus, 

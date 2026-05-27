@@ -357,6 +357,13 @@ class TransactionService:
             "pages": pages
         }
 
+    def _normalize_datetime(self, dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
     async def get_cashier_transaction_history(
         self,
         current_user,
@@ -368,6 +375,9 @@ class TransactionService:
         limit: int = 20,
         include_summary: bool = True,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         cursor_created_at: datetime | None = None
         cursor_id: UUID | None = None
         if cursor:
@@ -411,6 +421,9 @@ class TransactionService:
         cursor: str | None = None,
         limit: int = 10,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         cursor_created_at: datetime | None = None
         cursor_id: UUID | None = None
         if cursor:
@@ -442,6 +455,9 @@ class TransactionService:
         date_to: datetime | None = None,
         recent_limit: int = 5,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         if date_from is None or date_to is None:
             now = datetime.utcnow()
             date_from = datetime(now.year, now.month, now.day)

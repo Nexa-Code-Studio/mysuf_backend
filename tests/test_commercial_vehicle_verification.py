@@ -197,7 +197,7 @@ async def test_admin_approval_fails_when_vehicle_class_mismatches_usage_type():
         user=buyer,
         verification_status=VerificationStatus.VERIFIED,
     )
-    # The vehicle is a CAR but we try to approve it for OJOL!
+    # The vehicle is a CAR but we try to approve it for COMMERCIAL_MOTORCYCLE!
     registry_vehicle = VehicleRegistryMockup(
         plate_number="B 9999 CAR",
         registration_number=f"STNK-{uuid4().hex[:8]}",
@@ -250,7 +250,7 @@ async def test_admin_approval_fails_when_vehicle_class_mismatches_usage_type():
             )
 
         assert res.status_code == 400
-        assert "OJOL usage registration requires a motorcycle" in res.json()["detail"]
+        assert "COMMERCIAL_MOTORCYCLE usage registration requires a motorcycle" in res.json()["detail"]
 
     finally:
         async with AsyncSessionLocal() as session:
