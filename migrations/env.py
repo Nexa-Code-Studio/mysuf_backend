@@ -31,6 +31,8 @@ from app.modules.subsidies import models
 from app.modules.vehicles import models
 from app.modules.registries import models
 from app.modules.notifications import models
+from app.modules.spbu_activities import models
+
 
 target_metadata = Base.metadata
 

@@ -37,3 +37,86 @@ class SubsidyPolicyResponse(BaseModel):
 class SubsidyPolicyListResponse(BaseModel):
     items: List[SubsidyPolicyResponse]
     pagination: PaginationMeta
+
+
+# Government Role Schemas
+
+class KKEligibilityItem(BaseModel):
+    id: UUID
+    kk_id: UUID
+    code: str
+    vehicle_count: int
+    total_njkb: Decimal
+    threshold: Decimal
+    eligible: str
+
+
+class KKEligibilityListResponse(BaseModel):
+    items: List[KKEligibilityItem]
+    total: int
+    page: int
+    size: int
+    eligible_count: int
+    ineligible_count: int
+    threshold: Decimal
+
+
+class ThresholdUpdateRequest(BaseModel):
+    threshold: Decimal
+
+
+class GovernmentQuotaPoliciesResponse(BaseModel):
+    warga: Decimal
+    motor_komersial: Decimal
+    mobil_komersial: Decimal
+    truk_komersial: Decimal
+
+
+class GovernmentQuotaPoliciesUpdate(BaseModel):
+    warga: Decimal
+    motor_komersial: Decimal
+    mobil_komersial: Decimal
+    truk_komersial: Decimal
+
+
+class GovernmentQuotaTransactionItem(BaseModel):
+    nikSensor: str
+    nama: str
+    baseQuota1: str
+    baseQuota2: str
+    baseQuota3: str
+    riskIndex: int
+    modifier: str
+    finalQuota: str
+
+
+class GovernmentQuotaTransactionResponse(BaseModel):
+    items: List[GovernmentQuotaTransactionItem]
+    total: int
+
+
+class BlacklistItem(BaseModel):
+    id: UUID
+    accountId: str
+    holderName: str
+    plate: str
+    type: str
+    reason: str
+    dateAdded: str
+    officer: str
+    status: str
+
+
+class BlacklistListResponse(BaseModel):
+    items: List[BlacklistItem]
+    total: int
+
+
+class BlacklistCreateRequest(BaseModel):
+    accountId: str
+    holderName: str
+    plate: str
+    type: str
+    status: str
+    reason: str
+

@@ -171,3 +171,44 @@ async def delete_spbu_staff(
     return None
 
 
+from app.modules.spbu_activities.schemas import SpbuActivityLogListResponse
+
+@router.get("/activity", response_model=SpbuActivityLogListResponse)
+async def get_spbu_activity_logs(
+    page: int = Query(1, ge=1),
+    size: int = Query(100, ge=1, le=100),
+    category: str | None = Query(None, description="Filter by category"),
+    search: str | None = Query(None, description="Search detail or category"),
+    gas_station_id: UUID | None = Query(None, description="Gas station ID filter (only for Super/Gov admins)"),
+    current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN, UserRole.SPBU_ADMIN, UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    resolved_station_id = current_user.gas_station_id
+    if any(r in current_user.role for r in [UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN]):
+        if gas_station_id:
+            resolved_station_id = gas_station_id
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="gas_station_id query parameter is required for Super/Gov admins"
+            )
+
+    if not resolved_station_id:
+        raise HTTPException(status_code=400, detail="User is not associated with any gas station")
+
+    from app.modules.spbu_activities.service import SpbuActivityService
+    service = SpbuActivityService(db)
+    items, total = await service.get_activity_logs(
+        gas_station_id=resolved_station_id,
+        category=category,
+        search=search,
+        page=page,
+        size=size
+    )
+    return {
+        "items": items,
+        "total": total
+    }
+
+
+

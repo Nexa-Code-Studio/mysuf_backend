@@ -1,5 +1,5 @@
 from typing import Any
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, get_optional_current_user, require_roles
@@ -29,6 +29,7 @@ async def read_users(
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
+    request: Request,
     user_in: UserCreate,
     current_user: User | None = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db)
@@ -41,7 +42,18 @@ async def create_user(
     - SUPERADMIN: Can create any account.
     """
     service = UserService(db)
-    return await service.create_user(user_in=user_in, current_user=current_user)
+    user = await service.create_user(user_in=user_in, current_user=current_user)
+    
+    # Audit logging
+    from app.modules.system_audit_logs.service import SystemAuditLogService
+    ip = SystemAuditLogService.resolve_ip(request)
+    audit_svc = SystemAuditLogService(db)
+    await audit_svc.log_action(
+        actor=current_user,
+        action=f"Tambah user baru: {user.name}",
+        ip_address=ip
+    )
+    return user
 
 @router.post("/me/buyer-profile", response_model=BuyerProfileResponse, status_code=status.HTTP_201_CREATED)
 async def create_buyer_profile(
@@ -183,6 +195,7 @@ async def read_user(
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
+    request: Request,
     user_id: str,
     user_in: UserUpdate,
     current_user: User = Depends(get_current_user),
@@ -195,10 +208,22 @@ async def update_user(
     - ADMIN_GAS_STATION: Can only modify a BUYER to grant them SALES_OFFICER role and link to gas station.
     """
     service = UserService(db)
-    return await service.update_user(user_id=user_id, user_in=user_in, current_user=current_user)
+    user = await service.update_user(user_id=user_id, user_in=user_in, current_user=current_user)
+    
+    # Audit logging
+    from app.modules.system_audit_logs.service import SystemAuditLogService
+    ip = SystemAuditLogService.resolve_ip(request)
+    audit_svc = SystemAuditLogService(db)
+    await audit_svc.log_action(
+        actor=current_user,
+        action=f"Update user: {user.name}",
+        ip_address=ip
+    )
+    return user
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
+    request: Request,
     user_id: str,
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN])),
     db: AsyncSession = Depends(get_db)
@@ -207,7 +232,20 @@ async def delete_user(
     Delete a user. Only SUPERADMIN can do this.
     """
     service = UserService(db)
+    target_user = await service.get_user(user_id=user_id)
+    target_name = target_user.name if target_user else user_id
+    
     await service.delete_user(user_id=user_id, current_user=current_user)
+    
+    # Audit logging
+    from app.modules.system_audit_logs.service import SystemAuditLogService
+    ip = SystemAuditLogService.resolve_ip(request)
+    audit_svc = SystemAuditLogService(db)
+    await audit_svc.log_action(
+        actor=current_user,
+        action=f"Hapus user: {target_name}",
+        ip_address=ip
+    )
 
 @router.get("/gas-stations/options")
 async def get_gas_stations_options(

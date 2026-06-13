@@ -24,3 +24,6 @@ import app.modules.subsidies.models
 import app.modules.vehicles.models
 import app.modules.registries.models
 import app.modules.notifications.models
+import app.modules.spbu_activities.models
+import app.modules.system_audit_logs.models
+

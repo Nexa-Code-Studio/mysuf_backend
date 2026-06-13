@@ -15,6 +15,8 @@ from app.api.v1.routes import companies as company_routes
 from app.api.v1.routes import fraud_logs as fraud_logs_routes
 from app.api.v1.routes import spbu as spbu_routes
 from app.api.v1.routes import government as government_routes
+from app.api.v1.routes import fleet as fleet_routes
+from app.api.v1.routes import system_activities as system_activities_routes
 
 api_router = APIRouter()
 api_router.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
@@ -33,4 +35,5 @@ api_router.include_router(company_routes.router, prefix="/companies", tags=["com
 api_router.include_router(fraud_logs_routes.router, prefix="/fraud-logs", tags=["fraud-logs"])
 api_router.include_router(spbu_routes.router, prefix="/spbu", tags=["spbu"])
 api_router.include_router(government_routes.router, prefix="/government", tags=["government"])
-
+api_router.include_router(fleet_routes.router, prefix="/fleet", tags=["fleet"])
+api_router.include_router(system_activities_routes.router, prefix="/mysuf-admin", tags=["mysuf-admin"])
