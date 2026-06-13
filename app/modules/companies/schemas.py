@@ -39,3 +39,69 @@ class CompanyResponse(CompanyBase):
     timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Fleet Role Schemas
+
+class FuelTrendItem(BaseModel):
+    month: str
+    liters: float
+
+class FleetSummaryResponse(BaseModel):
+    totalVehicles: int
+    monthlyConsumption: float
+    activeDrivers: int
+    remainingQuotaPercent: int
+    fuelConsumptionTrend: list[FuelTrendItem]
+
+class FleetVehicleItem(BaseModel):
+    id: UUID
+    plate: str
+    type: str
+    driver: str
+    driver_id: Optional[UUID] = None
+    status: str
+    quotaLimit: float
+    quotaUsed: float
+
+class FleetVehicleListResponse(BaseModel):
+    items: list[FleetVehicleItem]
+    total: int
+
+class FleetVehicleCreateRequest(BaseModel):
+    plate: str
+
+class FleetVehicleAssignDriverRequest(BaseModel):
+    driver_id: Optional[UUID] = None
+
+class FleetDriverItem(BaseModel):
+    id: UUID
+    name: str
+    email: str
+
+class FleetLegalResponse(BaseModel):
+    siup_no: Optional[str] = None
+    nib: Optional[str] = None
+    npwp_no: Optional[str] = None
+    status: str
+
+class FleetProfileResponse(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    fleet_size: Optional[int] = None
+
+class FleetVehicleTransactionItem(BaseModel):
+    id: UUID
+    date: str
+    driver: str
+    fuelType: str
+    liters: float
+    amount: float
+    station: str
+    status: str
+
+class FleetVehicleTransactionListResponse(BaseModel):
+    items: list[FleetVehicleTransactionItem]
+    total: int
+

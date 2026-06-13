@@ -110,6 +110,7 @@ async def test_get_buyer_quota_detail_api():
     transaction_id_1 = None
     transaction_id_2 = None
     quota_id = None
+    eligibility_id = None
 
     try:
         async with AsyncSessionLocal() as session:
@@ -169,9 +170,20 @@ async def test_get_buyer_quota_detail_api():
                 used_liters=Decimal("30.00"),
                 is_active=True,
             )
-            session.add(quota)
+            
+            eligibility = KKSubsidyEligibility(
+                kk_id=buyer_profile.kk_id,
+                subsidy_policy_id=policy.id,
+                total_njkb=Decimal("280000000.00"),
+                eligibility_status=EligibilityStatus.ELIGIBLE,
+                eligibility_reason="Eligible",
+                checked_at=now,
+            )
+            
+            session.add_all([quota, eligibility])
             await session.flush()
             quota_id = quota.id
+            eligibility_id = eligibility.id
 
             # Create vehicle ownership
             ownership = VehicleOwnership(
@@ -272,6 +284,8 @@ async def test_get_buyer_quota_detail_api():
                 await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id))
             if quota_id:
                 await session.execute(delete(SubsidyQuota).where(SubsidyQuota.id == quota_id))
+            if eligibility_id:
+                await session.execute(delete(KKSubsidyEligibility).where(KKSubsidyEligibility.id == eligibility_id))
             if vehicle_registry_id:
                 await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == vehicle_registry_id))
             if subsidized_fuel_id:
@@ -350,7 +364,7 @@ async def test_get_buyer_home_with_company_operational_vehicle():
                 owner_id=buyer_profile.id,
                 vehicle_id=registry_vehicle.id,
                 ownership_status=VehicleOwnershipStatus.COMPANY,
-                usage_type=VehicleUsageType.COMPANY_OPERATIONAL,
+                usage_type=VehicleUsageType.COMMERCIAL_CAR,
                 quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
                 plate_number_snapshot=registry_vehicle.plate_number,
                 ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,

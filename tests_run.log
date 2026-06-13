@@ -1,0 +1,1389 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/mashupsoat/Project/mysuf/mysuf_backend
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 1 item
+
+tests/test_government_integration.py F                                   [100%]
+
+=================================== FAILURES ===================================
+__________________________ test_government_endpoints ___________________________
+
+self = <sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_cursor object at 0x7fb0a3f138e0>
+operation = 'DELETE FROM kk WHERE kk.id = $1::UUID'
+parameters = (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+
+    async def _prepare_and_execute(self, operation, parameters):
+        adapt_connection = self._adapt_connection
+    
+        async with adapt_connection._execute_mutex:
+            if not adapt_connection._started:
+                await adapt_connection._start_transaction()
+    
+            if parameters is None:
+                parameters = ()
+    
+            try:
+                prepared_stmt, attributes = await adapt_connection._prepare(
+                    operation, self._invalidate_schema_cache_asof
+                )
+    
+                if attributes:
+                    self.description = [
+                        (
+                            attr.name,
+                            attr.type.oid,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        for attr in attributes
+                    ]
+                else:
+                    self.description = None
+    
+                if self.server_side:
+                    self._cursor = await prepared_stmt.cursor(*parameters)
+                    self.rowcount = -1
+                else:
+>                   self._rows = deque(await prepared_stmt.fetch(*parameters))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:550: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.11/site-packages/asyncpg/prepared_stmt.py:177: in fetch
+    data = await self.__bind_execute(args, 0, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/asyncpg/prepared_stmt.py:268: in __bind_execute
+    data, status, _ = await self.__do_execute(
+venv/lib/python3.11/site-packages/asyncpg/prepared_stmt.py:257: in __do_execute
+    return await executor(protocol)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   asyncpg.exceptions.ForeignKeyViolationError: update or delete on table "kk" violates foreign key constraint "kk_subsidy_eligibilities_kk_id_fkey" on table "kk_subsidy_eligibilities"
+E   DETAIL:  Key (id)=(06a2c43a-7e97-7225-8000-911b545f1595) is still referenced from table "kk_subsidy_eligibilities".
+
+asyncpg/protocol/protocol.pyx:205: ForeignKeyViolationError
+
+The above exception was the direct cause of the following exception:
+
+self = <sqlalchemy.engine.base.Connection object at 0x7fb0a2c50f50>
+dialect = <sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x7fb0a69a1e50>
+context = <sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x7fb0a2cee450>
+statement = <sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x7fb0a2c5b0d0>
+parameters = [(UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1969: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x7fb0a3d894e0>>
+error = ForeignKeyViolationError('update or delete on table "kk" violates foreign key constraint "kk_subsidy_eligibilities_kk_id_fkey" on table "kk_subsidy_eligibilities"')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "kk" violates foreign key constraint "kk_subsidy_eligibilities_kk_id_fkey" on table "kk_subsidy_eligibilities"
+E                   DETAIL:  Key (id)=(06a2c43a-7e97-7225-8000-911b545f1595) is still referenced from table "kk_subsidy_eligibilities".
+
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: IntegrityError
+
+The above exception was the direct cause of the following exception:
+
+    @pytest.mark.anyio
+    async def test_government_endpoints():
+        kk = KK(code=f"KK-GOV-{uuid4().hex[:8]}")
+        user = User(
+            name="Gov Inspector",
+            email=f"gov-inspector-{uuid4().hex[:8]}@example.com",
+            password=get_password_hash("secret123"),
+            role=[UserRole.GOV_ADMIN],
+            is_active=True,
+        )
+        buyer = User(
+            name="Regular Buyer",
+            email=f"buyer-enforce-{uuid4().hex[:8]}@example.com",
+            password=get_password_hash("secret123"),
+            role=[UserRole.BUYER],
+            is_active=True,
+        )
+    
+        kk_id = None
+        user_id = None
+        buyer_id = None
+        buyer_profile_id = None
+    
+        try:
+            async with AsyncSessionLocal() as session:
+                # Check or create PERSONAL subsidy policy
+                from sqlalchemy import select
+                policy_result = await session.execute(
+                    select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
+                )
+                policy = policy_result.scalars().first()
+                if not policy:
+                    policy = SubsidyPolicy(
+                        name="Personal Fuel Subsidy Policy",
+                        usage_type=VehicleUsageType.PERSONAL,
+                        monthly_quota_liters=Decimal("200.00"),
+                        max_allowed_njkb=Decimal("300000000.00"),
+                        is_active=True,
+                    )
+                    session.add(policy)
+    
+                session.add_all([kk, user, buyer])
+                await session.commit()
+    
+                await session.refresh(kk)
+                await session.refresh(user)
+                await session.refresh(buyer)
+    
+                kk_id = kk.id
+                user_id = user.id
+                buyer_id = buyer.id
+    
+                # Create BuyerProfile
+                buyer_profile = BuyerProfile(
+                    nik_snapshot=f"3201{uuid4().hex[:12]}",
+                    ktp_nfc_id_snapshot=f"NFC-{uuid4().hex[:8]}",
+                    kk_id=kk.id,
+                    user_id=buyer.id,
+                    verification_status=VerificationStatus.VERIFIED,
+                    risk_score=Decimal("20.00"),
+                )
+                session.add(buyer_profile)
+                await session.commit()
+                await session.refresh(buyer_profile)
+                buyer_profile_id = buyer_profile.id
+    
+            token = _build_gov_token(str(user_id))
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                # 1. Test GET /api/v1/government/eligibility
+                res = await ac.get(
+                    "/api/v1/government/eligibility",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                data = res.json()
+                assert "items" in data
+                assert len(data["items"]) >= 1
+    
+                # 2. Test PUT /api/v1/government/eligibility/threshold
+                res = await ac.put(
+                    "/api/v1/government/eligibility/threshold",
+                    json={"threshold": 350000000},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                assert res.json()["threshold"] == 350000000
+    
+                # 3. Test GET /api/v1/government/quota-policies
+                res = await ac.get(
+                    "/api/v1/government/quota-policies",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                data = res.json()
+                assert "warga" in data
+                assert "motor_komersial" in data
+    
+                # 4. Test PUT /api/v1/government/quota-policies
+                res = await ac.put(
+                    "/api/v1/government/quota-policies",
+                    json={
+                        "warga": 280,
+                        "motor_komersial": 120,
+                        "mobil_komersial": 260,
+                        "truk_komersial": 550
+                    },
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                assert res.json()["status"] == "success"
+    
+                # 5. Test GET /api/v1/government/quota-transactions
+                res = await ac.get(
+                    "/api/v1/government/quota-transactions",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                assert len(res.json()["items"]) >= 1
+    
+                # 6. Test POST /api/v1/government/blacklist (Block account)
+                res = await ac.post(
+                    "/api/v1/government/blacklist",
+                    json={
+                        "accountId": f"NIK {buyer_profile.nik_snapshot}",
+                        "holderName": buyer.name,
+                        "plate": "B 1234 ABC",
+                        "type": "Car",
+                        "status": "BLOCKED",
+                        "reason": "Dugaan penimbunan BBM subsidi"
+                    },
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+    
+                # Verify user is blocked in DB
+                async with AsyncSessionLocal() as session:
+                    refreshed_buyer = await session.get(User, buyer_id)
+                    assert refreshed_buyer.is_blocked is True
+    
+                # 7. Test GET /api/v1/government/blacklist
+                res = await ac.get(
+                    "/api/v1/government/blacklist",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                blacklist_items = res.json()["items"]
+                assert any(item["holderName"] == buyer.name for item in blacklist_items)
+    
+                # 8. Test PUT /api/v1/government/blacklist/{user_id}/restore
+                res = await ac.put(
+                    f"/api/v1/government/blacklist/{buyer_id}/restore",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+    
+                # Verify user is unblocked in DB
+                async with AsyncSessionLocal() as session:
+                    refreshed_buyer = await session.get(User, buyer_id)
+                    assert refreshed_buyer.is_blocked is False
+    
+        finally:
+            # Teardown
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import delete
+                if buyer_profile_id:
+                    await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
+                if buyer_id:
+                    await session.execute(delete(User).where(User.id == buyer_id))
+                if user_id:
+                    await session.execute(delete(User).where(User.id == user_id))
+                if kk_id:
+>                   await session.execute(delete(KK).where(KK.id == kk_id))
+
+tests/test_government_integration.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2372: in execute
+    return self._execute_internal(
+venv/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2270: in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+venv/lib/python3.11/site-packages/sqlalchemy/orm/bulk_persistence.py:2033: in orm_execute_statement
+    return super().orm_execute_statement(
+venv/lib/python3.11/site-packages/sqlalchemy/orm/context.py:306: in orm_execute_statement
+    result = conn.execute(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1421: in execute
+    return meth(
+venv/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+    return connection._execute_clauseelement(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1643: in _execute_clauseelement
+    ret = self._execute_context(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1848: in _execute_context
+    return self._exec_single_context(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1988: in _exec_single_context
+    self._handle_dbapi_exception(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2365: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+venv/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1969: in _exec_single_context
+    self.dialect.do_execute(
+venv/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:563: in _prepare_and_execute
+    self._handle_exception(error)
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:513: in _handle_exception
+    self._adapt_connection._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x7fb0a3d894e0>>
+error = ForeignKeyViolationError('update or delete on table "kk" violates foreign key constraint "kk_subsidy_eligibilities_kk_id_fkey" on table "kk_subsidy_eligibilities"')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.ForeignKeyViolationError'>: update or delete on table "kk" violates foreign key constraint "kk_subsidy_eligibilities_kk_id_fkey" on table "kk_subsidy_eligibilities"
+E                   DETAIL:  Key (id)=(06a2c43a-7e97-7225-8000-911b545f1595) is still referenced from table "kk_subsidy_eligibilities".
+E                   [SQL: DELETE FROM kk WHERE kk.id = $1::UUID]
+E                   [parameters: (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)]
+E                   (Background on this error at: https://sqlalche.me/e/20/gkpj)
+
+venv/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: IntegrityError
+----------------------------- Captured stdout call -----------------------------
+2026-06-13 00:36:39,898 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-06-13 00:36:39,898 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-06-13 00:36:39,899 INFO sqlalchemy.engine.Engine select current_schema()
+2026-06-13 00:36:39,899 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-06-13 00:36:39,900 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-06-13 00:36:39,900 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-06-13 00:36:39,901 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:39,903 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:39,903 INFO sqlalchemy.engine.Engine [generated in 0.00017s] ('PERSONAL',)
+2026-06-13 00:36:39,911 INFO sqlalchemy.engine.Engine INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+2026-06-13 00:36:39,912 INFO sqlalchemy.engine.Engine [generated in 0.00020s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), 'KK-GOV-4452d602')
+2026-06-13 00:36:39,914 INFO sqlalchemy.engine.Engine INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, ... 281 characters truncated ... E, $23::TIMESTAMP WITHOUT TIME ZONE, $24::VARCHAR, $25::VARCHAR, $26::UUID, $27::UUID, $28::VARCHAR)
+2026-06-13 00:36:39,914 INFO sqlalchemy.engine.Engine [generated in 0.00031s (insertmanyvalues) 1/1 (unordered)] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'), 'Gov Inspector', 'gov-inspector-5bda8d25@example.com', '$2b$12$yFt5Y0/oPW2ymvf6crRvIObLCuHwx8dznacaWGeip0fqV6wWtiNLC', ['GOV_ADMIN'], True, False, None, datetime.datetime(2026, 6, 12, 17, 36, 39, 913920), None, None, None, None, None, UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'), 'Regular Buyer', 'buyer-enforce-33b4551e@example.com', '$2b$12$Iu8tSwSlw3shNo9IEwcPk.3VVdHwRc1zbBF9396LtehE4ilZaFJiO', ['BUYER'], True, False, None, datetime.datetime(2026, 6, 12, 17, 36, 39, 913928), None, None, None, None, None)
+2026-06-13 00:36:39,918 INFO sqlalchemy.engine.Engine COMMIT
+2026-06-13 00:36:39,935 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:39,936 INFO sqlalchemy.engine.Engine SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+2026-06-13 00:36:39,936 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+2026-06-13 00:36:39,938 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-06-13 00:36:39,938 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+2026-06-13 00:36:39,939 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-06-13 00:36:39,939 INFO sqlalchemy.engine.Engine [cached since 0.001657s ago] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+2026-06-13 00:36:39,941 INFO sqlalchemy.engine.Engine INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+2026-06-13 00:36:39,941 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'), '3201d23f4679c942', 'NFC-2cd41283', datetime.datetime(2026, 6, 12, 17, 36, 39, 941448), UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'), UUID('06a2c43a-7e97-7225-8000-911b545f1595'), None, False, 'VERIFIED', Decimal('20.00'))
+2026-06-13 00:36:39,945 INFO sqlalchemy.engine.Engine COMMIT
+2026-06-13 00:36:39,954 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:39,954 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:39,954 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+2026-06-13 00:36:39,956 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-06-13 00:36:39,962 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:39,962 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-06-13 00:36:39,962 INFO sqlalchemy.engine.Engine [generated in 0.00012s] ('806c8fb2-0fd8-4d00-9a23-3985657d8310',)
+2026-06-13 00:36:39,965 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-06-13 00:36:39,965 INFO sqlalchemy.engine.Engine [generated in 0.00014s] ('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d',)
+2026-06-13 00:36:39,966 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-06-13 00:36:39,967 INFO sqlalchemy.engine.Engine [generated in 0.00017s] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+2026-06-13 00:36:39,968 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:39,969 INFO sqlalchemy.engine.Engine [cached since 0.06593s ago] ('PERSONAL',)
+2026-06-13 00:36:39,970 INFO sqlalchemy.engine.Engine SELECT kk.id, kk.code 
+FROM kk
+2026-06-13 00:36:39,970 INFO sqlalchemy.engine.Engine [generated in 0.00010s] ()
+2026-06-13 00:36:39,971 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,971 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+2026-06-13 00:36:39,974 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,974 INFO sqlalchemy.engine.Engine [generated in 0.00033s] ('BUYER_PROFILE', UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'))
+2026-06-13 00:36:39,979 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,979 INFO sqlalchemy.engine.Engine [generated in 0.00018s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,983 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,983 INFO sqlalchemy.engine.Engine [cached since 0.01208s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+2026-06-13 00:36:39,983 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,984 INFO sqlalchemy.engine.Engine [cached since 0.009902s ago] ('BUYER_PROFILE', UUID('60f0e261-437b-4781-ba15-8808690e4ef9'))
+2026-06-13 00:36:39,984 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,984 INFO sqlalchemy.engine.Engine [cached since 0.00548s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,985 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,985 INFO sqlalchemy.engine.Engine [cached since 0.01444s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+2026-06-13 00:36:39,986 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,986 INFO sqlalchemy.engine.Engine [cached since 0.01221s ago] ('BUYER_PROFILE', UUID('4156a193-4153-4e9e-9de2-5e678b64e691'))
+2026-06-13 00:36:39,986 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,986 INFO sqlalchemy.engine.Engine [cached since 0.007544s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,987 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,987 INFO sqlalchemy.engine.Engine [cached since 0.01626s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'),)
+2026-06-13 00:36:39,988 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,988 INFO sqlalchemy.engine.Engine [cached since 0.008753s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,988 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,988 INFO sqlalchemy.engine.Engine [cached since 0.01763s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+2026-06-13 00:36:39,989 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,989 INFO sqlalchemy.engine.Engine [cached since 0.01568s ago] ('BUYER_PROFILE', UUID('06a2c437-6fea-7e65-8000-04e391575511'))
+2026-06-13 00:36:39,990 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,990 INFO sqlalchemy.engine.Engine [cached since 0.01133s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,991 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,991 INFO sqlalchemy.engine.Engine [cached since 0.02016s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+2026-06-13 00:36:39,992 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,992 INFO sqlalchemy.engine.Engine [cached since 0.01792s ago] ('BUYER_PROFILE', UUID('06a2c437-c339-7f41-8000-9c407de7981e'))
+2026-06-13 00:36:39,992 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,992 INFO sqlalchemy.engine.Engine [cached since 0.01337s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,993 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,993 INFO sqlalchemy.engine.Engine [cached since 0.02209s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+2026-06-13 00:36:39,993 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,993 INFO sqlalchemy.engine.Engine [cached since 0.01971s ago] ('BUYER_PROFILE', UUID('06a2c43a-264e-7a0d-8000-294210279d68'))
+2026-06-13 00:36:39,994 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,994 INFO sqlalchemy.engine.Engine [cached since 0.01505s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,994 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:39,994 INFO sqlalchemy.engine.Engine [cached since 0.02372s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+2026-06-13 00:36:39,995 INFO sqlalchemy.engine.Engine SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,995 INFO sqlalchemy.engine.Engine [cached since 0.0214s ago] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+2026-06-13 00:36:39,995 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:39,996 INFO sqlalchemy.engine.Engine [cached since 0.01666s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:39,996 INFO sqlalchemy.engine.Engine SELECT distinct(vehicle_ownerships.vehicle_id) AS distinct_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+2026-06-13 00:36:39,996 INFO sqlalchemy.engine.Engine [generated in 0.00013s] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+2026-06-13 00:36:39,997 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-06-13 00:36:39,999 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:40,000 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-06-13 00:36:40,000 INFO sqlalchemy.engine.Engine [cached since 0.03732s ago] ('806c8fb2-0fd8-4d00-9a23-3985657d8310',)
+2026-06-13 00:36:40,001 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-06-13 00:36:40,001 INFO sqlalchemy.engine.Engine [cached since 0.03598s ago] ('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d',)
+2026-06-13 00:36:40,001 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-06-13 00:36:40,002 INFO sqlalchemy.engine.Engine [cached since 0.03521s ago] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+2026-06-13 00:36:40,003 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,003 INFO sqlalchemy.engine.Engine [cached since 0.09995s ago] ('PERSONAL',)
+2026-06-13 00:36:40,003 INFO sqlalchemy.engine.Engine COMMIT
+2026-06-13 00:36:40,004 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:40,004 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.id = $1::UUID
+2026-06-13 00:36:40,004 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'),)
+2026-06-13 00:36:40,005 INFO sqlalchemy.engine.Engine SELECT kk.id, kk.code 
+FROM kk
+2026-06-13 00:36:40,006 INFO sqlalchemy.engine.Engine [cached since 0.03607s ago] ()
+2026-06-13 00:36:40,007 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,007 INFO sqlalchemy.engine.Engine [generated in 0.00015s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+2026-06-13 00:36:40,008 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,008 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'),)
+2026-06-13 00:36:40,009 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,009 INFO sqlalchemy.engine.Engine [cached since 0.1065s ago] ('PERSONAL',)
+2026-06-13 00:36:40,010 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,010 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+2026-06-13 00:36:40,013 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,013 INFO sqlalchemy.engine.Engine [generated in 0.00016s] (UUID('94c1c5cb-298b-472a-b738-8f300c5906d9'),)
+2026-06-13 00:36:40,015 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,015 INFO sqlalchemy.engine.Engine [generated in 0.00015s] ('BUYER_PROFILE', UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'))
+2026-06-13 00:36:40,023 INFO sqlalchemy.engine.Engine SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+2026-06-13 00:36:40,023 INFO sqlalchemy.engine.Engine [generated in 0.00024s] (UUID('bc44a7e5-1d0b-4c2a-9ab6-2e2249b7670f'),)
+2026-06-13 00:36:40,027 INFO sqlalchemy.engine.Engine SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+2026-06-13 00:36:40,027 INFO sqlalchemy.engine.Engine [generated in 0.00017s] (UUID('ace0b356-2d3d-45bf-aa98-f3662c9cff9d'),)
+2026-06-13 00:36:40,031 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,031 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,033 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,033 INFO sqlalchemy.engine.Engine [generated in 0.00017s] (datetime.datetime(2026, 6, 12, 17, 36, 40, 32042), datetime.datetime(2026, 6, 12, 17, 36, 40, 33097), UUID('1ca79d69-79f0-4b1f-b1b4-9e09aeffe9ac'))
+2026-06-13 00:36:40,034 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,034 INFO sqlalchemy.engine.Engine [cached since 0.02716s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+2026-06-13 00:36:40,034 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,035 INFO sqlalchemy.engine.Engine [cached since 0.02623s ago] (UUID('60f0e261-437b-4781-ba15-8808690e4ef9'),)
+2026-06-13 00:36:40,035 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,035 INFO sqlalchemy.engine.Engine [cached since 0.1325s ago] ('PERSONAL',)
+2026-06-13 00:36:40,036 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,036 INFO sqlalchemy.engine.Engine [cached since 0.02545s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+2026-06-13 00:36:40,036 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,037 INFO sqlalchemy.engine.Engine [cached since 0.02383s ago] (UUID('ebb27f44-f95a-482d-8478-5a8d8bd7d0a8'),)
+2026-06-13 00:36:40,037 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,038 INFO sqlalchemy.engine.Engine [cached since 0.02254s ago] ('BUYER_PROFILE', UUID('60f0e261-437b-4781-ba15-8808690e4ef9'))
+2026-06-13 00:36:40,038 INFO sqlalchemy.engine.Engine SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+2026-06-13 00:36:40,038 INFO sqlalchemy.engine.Engine [cached since 0.0157s ago] (UUID('893820eb-7d05-4025-9b90-71a04fdf4fe8'),)
+2026-06-13 00:36:40,039 INFO sqlalchemy.engine.Engine SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+2026-06-13 00:36:40,039 INFO sqlalchemy.engine.Engine [cached since 0.01227s ago] (UUID('2cf7e043-ecbf-4cf1-ab04-090f033755ea'),)
+2026-06-13 00:36:40,040 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,040 INFO sqlalchemy.engine.Engine [cached since 0.009562s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,041 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,041 INFO sqlalchemy.engine.Engine [cached since 0.008545s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 41208), datetime.datetime(2026, 6, 12, 17, 36, 40, 41526), UUID('ec3feb76-9801-4ab8-b8d4-db10c97c0d21'))
+2026-06-13 00:36:40,042 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,042 INFO sqlalchemy.engine.Engine [cached since 0.03511s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+2026-06-13 00:36:40,042 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,042 INFO sqlalchemy.engine.Engine [cached since 0.034s ago] (UUID('4156a193-4153-4e9e-9de2-5e678b64e691'),)
+2026-06-13 00:36:40,043 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,043 INFO sqlalchemy.engine.Engine [cached since 0.1402s ago] ('PERSONAL',)
+2026-06-13 00:36:40,043 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,043 INFO sqlalchemy.engine.Engine [cached since 0.03309s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+2026-06-13 00:36:40,044 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,044 INFO sqlalchemy.engine.Engine [cached since 0.03142s ago] (UUID('60b8c570-c81f-4b7d-b116-cab415d79cdd'),)
+2026-06-13 00:36:40,045 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,045 INFO sqlalchemy.engine.Engine [cached since 0.03003s ago] ('BUYER_PROFILE', UUID('4156a193-4153-4e9e-9de2-5e678b64e691'))
+2026-06-13 00:36:40,046 INFO sqlalchemy.engine.Engine SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+2026-06-13 00:36:40,046 INFO sqlalchemy.engine.Engine [cached since 0.02305s ago] (UUID('80765a71-d388-4ebe-99aa-2c3a6282ec03'),)
+2026-06-13 00:36:40,046 INFO sqlalchemy.engine.Engine SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+2026-06-13 00:36:40,046 INFO sqlalchemy.engine.Engine [cached since 0.01939s ago] (UUID('25ca0034-78f1-4116-bec7-0b251ab8b215'),)
+2026-06-13 00:36:40,047 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,047 INFO sqlalchemy.engine.Engine [cached since 0.01634s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,048 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,048 INFO sqlalchemy.engine.Engine [cached since 0.01531s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 47993), datetime.datetime(2026, 6, 12, 17, 36, 40, 48288), UUID('eb590a12-3e49-4cf4-80b4-71f949df9744'))
+2026-06-13 00:36:40,048 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,049 INFO sqlalchemy.engine.Engine [cached since 0.04194s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'),)
+2026-06-13 00:36:40,049 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,049 INFO sqlalchemy.engine.Engine [cached since 0.04247s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+2026-06-13 00:36:40,050 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,050 INFO sqlalchemy.engine.Engine [cached since 0.0414s ago] (UUID('06a2c437-6fea-7e65-8000-04e391575511'),)
+2026-06-13 00:36:40,050 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,050 INFO sqlalchemy.engine.Engine [cached since 0.1478s ago] ('PERSONAL',)
+2026-06-13 00:36:40,051 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,051 INFO sqlalchemy.engine.Engine [cached since 0.04065s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+2026-06-13 00:36:40,052 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,052 INFO sqlalchemy.engine.Engine [cached since 0.03902s ago] (UUID('06a2c437-6f7f-7915-8000-a80d5f5e1f3f'),)
+2026-06-13 00:36:40,053 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,053 INFO sqlalchemy.engine.Engine [cached since 0.03772s ago] ('BUYER_PROFILE', UUID('06a2c437-6fea-7e65-8000-04e391575511'))
+2026-06-13 00:36:40,053 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,053 INFO sqlalchemy.engine.Engine [cached since 0.02281s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,054 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,054 INFO sqlalchemy.engine.Engine [cached since 0.02158s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 54305), datetime.datetime(2026, 6, 12, 17, 36, 40, 54567), UUID('06a2c437-7216-7a90-8000-197244f922ca'))
+2026-06-13 00:36:40,055 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,055 INFO sqlalchemy.engine.Engine [cached since 0.04816s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+2026-06-13 00:36:40,055 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,055 INFO sqlalchemy.engine.Engine [cached since 0.04693s ago] (UUID('06a2c437-c339-7f41-8000-9c407de7981e'),)
+2026-06-13 00:36:40,056 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,056 INFO sqlalchemy.engine.Engine [cached since 0.1535s ago] ('PERSONAL',)
+2026-06-13 00:36:40,057 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,057 INFO sqlalchemy.engine.Engine [cached since 0.04662s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+2026-06-13 00:36:40,058 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,058 INFO sqlalchemy.engine.Engine [cached since 0.04501s ago] (UUID('06a2c437-c2c6-7856-8000-2444705d2651'),)
+2026-06-13 00:36:40,059 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,059 INFO sqlalchemy.engine.Engine [cached since 0.04369s ago] ('BUYER_PROFILE', UUID('06a2c437-c339-7f41-8000-9c407de7981e'))
+2026-06-13 00:36:40,059 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,060 INFO sqlalchemy.engine.Engine [cached since 0.02892s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,061 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,061 INFO sqlalchemy.engine.Engine [cached since 0.02804s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 60671), datetime.datetime(2026, 6, 12, 17, 36, 40, 60997), UUID('06a2c437-c51e-7ba7-8000-5d555fbdb11d'))
+2026-06-13 00:36:40,061 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,061 INFO sqlalchemy.engine.Engine [cached since 0.05477s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+2026-06-13 00:36:40,062 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,062 INFO sqlalchemy.engine.Engine [cached since 0.05377s ago] (UUID('06a2c43a-264e-7a0d-8000-294210279d68'),)
+2026-06-13 00:36:40,063 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,063 INFO sqlalchemy.engine.Engine [cached since 0.1601s ago] ('PERSONAL',)
+2026-06-13 00:36:40,063 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,063 INFO sqlalchemy.engine.Engine [cached since 0.05285s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+2026-06-13 00:36:40,064 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,064 INFO sqlalchemy.engine.Engine [cached since 0.05115s ago] (UUID('06a2c43a-25dc-7d14-8000-b2fcabe9d90c'),)
+2026-06-13 00:36:40,065 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,065 INFO sqlalchemy.engine.Engine [cached since 0.04961s ago] ('BUYER_PROFILE', UUID('06a2c43a-264e-7a0d-8000-294210279d68'))
+2026-06-13 00:36:40,065 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,065 INFO sqlalchemy.engine.Engine [cached since 0.03465s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,066 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+2026-06-13 00:36:40,066 INFO sqlalchemy.engine.Engine [cached since 0.03345s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 66135), datetime.datetime(2026, 6, 12, 17, 36, 40, 66432), UUID('06a2c43a-2845-7aa2-8000-6c897a3aab6c'))
+2026-06-13 00:36:40,067 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,067 INFO sqlalchemy.engine.Engine [cached since 0.06003s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+2026-06-13 00:36:40,067 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,067 INFO sqlalchemy.engine.Engine [cached since 0.05894s ago] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+2026-06-13 00:36:40,068 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-06-13 00:36:40,068 INFO sqlalchemy.engine.Engine [cached since 0.1651s ago] ('PERSONAL',)
+2026-06-13 00:36:40,068 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+2026-06-13 00:36:40,068 INFO sqlalchemy.engine.Engine [cached since 0.05802s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+2026-06-13 00:36:40,069 INFO sqlalchemy.engine.Engine SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+2026-06-13 00:36:40,069 INFO sqlalchemy.engine.Engine [cached since 0.05642s ago] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+2026-06-13 00:36:40,070 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+2026-06-13 00:36:40,070 INFO sqlalchemy.engine.Engine [cached since 0.05502s ago] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+2026-06-13 00:36:40,071 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-06-13 00:36:40,071 INFO sqlalchemy.engine.Engine [cached since 0.04013s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+2026-06-13 00:36:40,072 INFO sqlalchemy.engine.Engine INSERT INTO kk_subsidy_eligibilities (id, kk_id, subsidy_policy_id, total_njkb, eligibility_status, eligibility_reason, checked_at, created_at, updated_at) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::NUMERIC(18, 2), $5::eligibility_status_enum, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE)
+2026-06-13 00:36:40,072 INFO sqlalchemy.engine.Engine [generated in 0.00018s] (UUID('06a2c43a-8128-7281-8000-d4bf79f062d1'), UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), Decimal('0'), 'ELIGIBLE', None, None, datetime.datetime(2026, 6, 12, 17, 36, 40, 72317), datetime.datetime(2026, 6, 12, 17, 36, 40, 72319))
+2026-06-13 00:36:40,073 INFO sqlalchemy.engine.Engine UPDATE kk_subsidy_eligibilities SET eligibility_reason=$1::VARCHAR, checked_at=$2::TIMESTAMP WITHOUT TIME ZONE, updated_at=$3::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $4::UUID
+2026-06-13 00:36:40,073 INFO sqlalchemy.engine.Engine [generated in 0.00015s] ('Total NJKB kendaraan unik dalam KK adalah 0.', datetime.datetime(2026, 6, 12, 17, 36, 40, 73372), datetime.datetime(2026, 6, 12, 17, 36, 40, 73847), UUID('06a2c43a-8128-7281-8000-d4bf79f062d1'))
+2026-06-13 00:36:40,074 INFO sqlalchemy.engine.Engine COMMIT
+2026-06-13 00:36:40,092 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-06-13 00:36:40,092 INFO sqlalchemy.engine.Engine DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+2026-06-13 00:36:40,092 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+2026-06-13 00:36:40,095 INFO sqlalchemy.engine.Engine DELETE FROM users WHERE users.id = $1::UUID
+2026-06-13 00:36:40,095 INFO sqlalchemy.engine.Engine [generated in 0.00016s] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+2026-06-13 00:36:40,096 INFO sqlalchemy.engine.Engine DELETE FROM users WHERE users.id = $1::UUID
+2026-06-13 00:36:40,097 INFO sqlalchemy.engine.Engine [cached since 0.001874s ago] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+2026-06-13 00:36:40,098 INFO sqlalchemy.engine.Engine DELETE FROM kk WHERE kk.id = $1::UUID
+2026-06-13 00:36:40,098 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+2026-06-13 00:36:40,098 INFO sqlalchemy.engine.Engine ROLLBACK
+------------------------------ Captured log call -------------------------------
+INFO     sqlalchemy.engine.Engine:base.py:1848 select pg_catalog.version()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 select current_schema()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 show standard_conforming_strings
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00020s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), 'KK-GOV-4452d602')
+INFO     sqlalchemy.engine.Engine:base.py:1846 INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, ... 281 characters truncated ... E, $23::TIMESTAMP WITHOUT TIME ZONE, $24::VARCHAR, $25::VARCHAR, $26::UUID, $27::UUID, $28::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1846 [generated in 0.00031s (insertmanyvalues) 1/1 (unordered)] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'), 'Gov Inspector', 'gov-inspector-5bda8d25@example.com', '$2b$12$yFt5Y0/oPW2ymvf6crRvIObLCuHwx8dznacaWGeip0fqV6wWtiNLC', ['GOV_ADMIN'], True, False, None, datetime.datetime(2026, 6, 12, 17, 36, 39, 913920), None, None, None, None, None, UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'), 'Regular Buyer', 'buyer-enforce-33b4551e@example.com', '$2b$12$Iu8tSwSlw3shNo9IEwcPk.3VVdHwRc1zbBF9396LtehE4ilZaFJiO', ['BUYER'], True, False, None, datetime.datetime(2026, 6, 12, 17, 36, 39, 913928), None, None, None, None, None)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.001657s ago] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'), '3201d23f4679c942', 'NFC-2cd41283', datetime.datetime(2026, 6, 12, 17, 36, 39, 941448), UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'), UUID('06a2c43a-7e97-7225-8000-911b545f1595'), None, False, 'VERIFIED', Decimal('20.00'))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] ('806c8fb2-0fd8-4d00-9a23-3985657d8310',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] ('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06593s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id, kk.code 
+FROM kk
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00033s] ('BUYER_PROFILE', UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00018s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01208s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.009902s ago] ('BUYER_PROFILE', UUID('60f0e261-437b-4781-ba15-8808690e4ef9'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.00548s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01444s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01221s ago] ('BUYER_PROFILE', UUID('4156a193-4153-4e9e-9de2-5e678b64e691'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.007544s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01626s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.008753s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01763s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01568s ago] ('BUYER_PROFILE', UUID('06a2c437-6fea-7e65-8000-04e391575511'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01133s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02016s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01792s ago] ('BUYER_PROFILE', UUID('06a2c437-c339-7f41-8000-9c407de7981e'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01337s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02209s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01971s ago] ('BUYER_PROFILE', UUID('06a2c43a-264e-7a0d-8000-294210279d68'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01505s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02372s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT count(distinct(vehicle_ownerships.vehicle_id)) AS count_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.0214s ago] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01666s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT distinct(vehicle_ownerships.vehicle_id) AS distinct_1 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03732s ago] ('806c8fb2-0fd8-4d00-9a23-3985657d8310',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03598s ago] ('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03521s ago] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09995s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id, kk.code 
+FROM kk
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03607s ago] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1065s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] (UUID('94c1c5cb-298b-472a-b738-8f300c5906d9'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] ('BUYER_PROFILE', UUID('720bf808-2e49-4bfd-92fe-026ada1039b0'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00024s] (UUID('bc44a7e5-1d0b-4c2a-9ab6-2e2249b7670f'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] (UUID('ace0b356-2d3d-45bf-aa98-f3662c9cff9d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (UUID('ca75e7ea-dc25-43bf-91e7-4136670af93e'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] (datetime.datetime(2026, 6, 12, 17, 36, 40, 32042), datetime.datetime(2026, 6, 12, 17, 36, 40, 33097), UUID('1ca79d69-79f0-4b1f-b1b4-9e09aeffe9ac'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02716s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02623s ago] (UUID('60f0e261-437b-4781-ba15-8808690e4ef9'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1325s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02545s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02383s ago] (UUID('ebb27f44-f95a-482d-8478-5a8d8bd7d0a8'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02254s ago] ('BUYER_PROFILE', UUID('60f0e261-437b-4781-ba15-8808690e4ef9'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.0157s ago] (UUID('893820eb-7d05-4025-9b90-71a04fdf4fe8'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01227s ago] (UUID('2cf7e043-ecbf-4cf1-ab04-090f033755ea'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.009562s ago] (UUID('4b8ed71f-83c6-4e69-8ad1-8b4ae095dbb0'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.008545s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 41208), datetime.datetime(2026, 6, 12, 17, 36, 40, 41526), UUID('ec3feb76-9801-4ab8-b8d4-db10c97c0d21'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03511s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.034s ago] (UUID('4156a193-4153-4e9e-9de2-5e678b64e691'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1402s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03309s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03142s ago] (UUID('60b8c570-c81f-4b7d-b116-cab415d79cdd'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03003s ago] ('BUYER_PROFILE', UUID('4156a193-4153-4e9e-9de2-5e678b64e691'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownership_documents.vehicle_ownership_id AS vehicle_ownership_documents_vehicle_ownership_id, vehicle_ownership_documents.id AS vehicle_ownership_documents_id, vehicle_ownership_documents.document_type AS vehicle_ownership_documents_document_type, vehicle_ownership_documents.storage_key AS vehicle_ownership_documents_storage_key, vehicle_ownership_documents.original_filename AS vehicle_ownership_documents_original_filename, vehicle_ownership_documents.mime_type AS vehicle_ownership_documents_mime_type, vehicle_ownership_documents.file_size_bytes AS vehicle_ownership_documents_file_size_bytes, vehicle_ownership_documents.checksum_sha256 AS vehicle_ownership_documents_checksum_sha256, vehicle_ownership_documents.created_at AS vehicle_ownership_documents_created_at, vehicle_ownership_documents.updated_at AS vehicle_ownership_documents_updated_at 
+FROM vehicle_ownership_documents 
+WHERE vehicle_ownership_documents.vehicle_ownership_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02305s ago] (UUID('80765a71-d388-4ebe-99aa-2c3a6282ec03'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01939s ago] (UUID('25ca0034-78f1-4116-bec7-0b251ab8b215'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01634s ago] (UUID('2f476797-5bd3-4a1e-b158-1e3c6589b5c5'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01531s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 47993), datetime.datetime(2026, 6, 12, 17, 36, 40, 48288), UUID('eb590a12-3e49-4cf4-80b4-71f949df9744'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04194s ago] (UUID('06a15bea-1867-75a6-8000-d11a5e8fc21d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04247s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.0414s ago] (UUID('06a2c437-6fea-7e65-8000-04e391575511'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1478s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04065s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03902s ago] (UUID('06a2c437-6f7f-7915-8000-a80d5f5e1f3f'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03772s ago] ('BUYER_PROFILE', UUID('06a2c437-6fea-7e65-8000-04e391575511'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02281s ago] (UUID('06a2c437-6f73-7b7c-8000-e51a84ccdb01'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02158s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 54305), datetime.datetime(2026, 6, 12, 17, 36, 40, 54567), UUID('06a2c437-7216-7a90-8000-197244f922ca'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04816s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04693s ago] (UUID('06a2c437-c339-7f41-8000-9c407de7981e'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1535s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04662s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04501s ago] (UUID('06a2c437-c2c6-7856-8000-2444705d2651'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04369s ago] ('BUYER_PROFILE', UUID('06a2c437-c339-7f41-8000-9c407de7981e'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02892s ago] (UUID('06a2c437-c2bd-7753-8000-532dd2407f3a'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02804s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 60671), datetime.datetime(2026, 6, 12, 17, 36, 40, 60997), UUID('06a2c437-c51e-7ba7-8000-5d555fbdb11d'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05477s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05377s ago] (UUID('06a2c43a-264e-7a0d-8000-294210279d68'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1601s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05285s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05115s ago] (UUID('06a2c43a-25dc-7d14-8000-b2fcabe9d90c'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04961s ago] ('BUYER_PROFILE', UUID('06a2c43a-264e-7a0d-8000-294210279d68'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03465s ago] (UUID('06a2c43a-25d4-7d93-8000-129fd1f0e8be'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET checked_at=$1::TIMESTAMP WITHOUT TIME ZONE, updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03345s ago] (datetime.datetime(2026, 6, 12, 17, 36, 40, 66135), datetime.datetime(2026, 6, 12, 17, 36, 40, 66432), UUID('06a2c43a-2845-7aa2-8000-6c897a3aab6c'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06003s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05894s ago] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1651s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.kk_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05802s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id AS users_id, users.name AS users_name, users.email AS users_email, users.password AS users_password, users.role AS users_role, users.is_active AS users_is_active, users.is_blocked AS users_is_blocked, users.frozen_until AS users_frozen_until, users.timestamp AS users_timestamp, users.employee_id AS users_employee_id, users.fcm_token AS users_fcm_token, users.gas_station_id AS users_gas_station_id, users.company_id AS users_company_id, users.shift AS users_shift 
+FROM users 
+WHERE users.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05642s ago] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at 
+FROM vehicle_ownerships 
+WHERE vehicle_ownerships.owner_type = $1::vehicle_owner_type_enum AND vehicle_ownerships.owner_id IN ($2::UUID) ORDER BY vehicle_ownerships.created_at DESC, vehicle_ownerships.id DESC
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.05502s ago] ('BUYER_PROFILE', UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04013s ago] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO kk_subsidy_eligibilities (id, kk_id, subsidy_policy_id, total_njkb, eligibility_status, eligibility_reason, checked_at, created_at, updated_at) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::NUMERIC(18, 2), $5::eligibility_status_enum, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00018s] (UUID('06a2c43a-8128-7281-8000-d4bf79f062d1'), UUID('06a2c43a-7e97-7225-8000-911b545f1595'), UUID('ed402321-b3b6-4076-a961-8b5b69fea27e'), Decimal('0'), 'ELIGIBLE', None, None, datetime.datetime(2026, 6, 12, 17, 36, 40, 72317), datetime.datetime(2026, 6, 12, 17, 36, 40, 72319))
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE kk_subsidy_eligibilities SET eligibility_reason=$1::VARCHAR, checked_at=$2::TIMESTAMP WITHOUT TIME ZONE, updated_at=$3::TIMESTAMP WITHOUT TIME ZONE WHERE kk_subsidy_eligibilities.id = $4::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] ('Total NJKB kendaraan unik dalam KK adalah 0.', datetime.datetime(2026, 6, 12, 17, 36, 40, 73372), datetime.datetime(2026, 6, 12, 17, 36, 40, 73847), UUID('06a2c43a-8128-7281-8000-d4bf79f062d1'))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a2c43a-7f10-71fd-8000-302cbbfbb097'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM users WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] (UUID('06a2c43a-7e9f-76ec-8000-7b6d4103c298'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM users WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.001874s ago] (UUID('06a2c43a-7e9f-75e8-8000-fb090b0dfa5d'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM kk WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a2c43a-7e97-7225-8000-911b545f1595'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+=========================== short test summary info ============================
+FAILED tests/test_government_integration.py::test_government_endpoints - sqla...
+============================== 1 failed in 1.97s ===============================

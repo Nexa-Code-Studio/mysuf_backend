@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +95,7 @@ async def get_companies(
 
 @router.put("/{company_id}/verify", response_model=CompanyResponse)
 async def verify_company(
+    request: Request,
     company_id: UUID,
     req: CompanyVerifyRequest,
     db: AsyncSession = Depends(get_db),
@@ -102,6 +103,19 @@ async def verify_company(
 ):
     service = CompanyService(db)
     try:
-        return await service.verify_company(company_id, req)
+        company = await service.verify_company(company_id, req)
+        
+        # Audit logging
+        from app.modules.system_audit_logs.service import SystemAuditLogService
+        ip = SystemAuditLogService.resolve_ip(request)
+        audit_svc = SystemAuditLogService(db)
+        
+        action_word = "Approve" if req.status == "VERIFIED" else "Reject"
+        await audit_svc.log_action(
+            actor=current_user,
+            action=f"{action_word} perusahaan: {company.name}",
+            ip_address=ip
+        )
+        return company
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

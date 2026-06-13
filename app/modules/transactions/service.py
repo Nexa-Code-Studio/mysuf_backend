@@ -357,6 +357,13 @@ class TransactionService:
             "pages": pages
         }
 
+    def _normalize_datetime(self, dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
     async def get_cashier_transaction_history(
         self,
         current_user,
@@ -368,6 +375,9 @@ class TransactionService:
         limit: int = 20,
         include_summary: bool = True,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         cursor_created_at: datetime | None = None
         cursor_id: UUID | None = None
         if cursor:
@@ -411,6 +421,9 @@ class TransactionService:
         cursor: str | None = None,
         limit: int = 10,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         cursor_created_at: datetime | None = None
         cursor_id: UUID | None = None
         if cursor:
@@ -442,6 +455,9 @@ class TransactionService:
         date_to: datetime | None = None,
         recent_limit: int = 5,
     ) -> dict:
+        date_from = self._normalize_datetime(date_from)
+        date_to = self._normalize_datetime(date_to)
+
         if date_from is None or date_to is None:
             now = datetime.utcnow()
             date_from = datetime(now.year, now.month, now.day)
@@ -966,6 +982,20 @@ class TransactionService:
         )
         self.db.add(fraud_log)
 
+        try:
+            from app.modules.spbu_activities.service import SpbuActivityService
+            from app.modules.spbu_activities.models import SpbuActivityCategory
+            activity_svc = SpbuActivityService(self.db)
+            plate = getattr(vehicle_ownership, "plate_number_snapshot", "N/A")
+            await activity_svc.log_activity(
+                gas_station_id=current_station.id,
+                category=SpbuActivityCategory.Keamanan,
+                detail=f"Fraud alert ditandai untuk Plat {plate}.",
+                user_id=None
+            )
+        except Exception as log_err:
+            logger.error(f"Failed to log fraud alert activity: {log_err}")
+
     async def log_cashier_scan_event(
         self,
         *,
@@ -1357,6 +1387,20 @@ class TransactionService:
         await self.db.refresh(payment_tx)
 
         try:
+            from app.modules.spbu_activities.service import SpbuActivityService
+            from app.modules.spbu_activities.models import SpbuActivityCategory
+            activity_svc = SpbuActivityService(self.db)
+            fuel_name = fuel_tx.fuel_type.name if fuel_tx.fuel_type else "BBM"
+            await activity_svc.log_activity(
+                gas_station_id=fuel_tx.gas_station_id,
+                category=SpbuActivityCategory.Penjualan,
+                detail=f"Penjualan {fuel_name} sebesar {float(fuel_tx.liters):.1f} Liter untuk Plat {fuel_tx.plate_number_snapshot} berhasil diproses.",
+                user_id=fuel_tx.verified_by_user_id
+            )
+        except Exception as log_err:
+            logger.error(f"Failed to log QRIS fuel purchase activity: {log_err}")
+
+        try:
             from app.modules.notifications.service import NotificationService
 
             formatted_amount = f"Rp {int(payment_tx.amount):,}".replace(",", ".")
@@ -1700,6 +1744,20 @@ class TransactionService:
 
         await self.db.commit()
         await self.db.refresh(fuel_tx)
+
+        try:
+            from app.modules.spbu_activities.service import SpbuActivityService
+            from app.modules.spbu_activities.models import SpbuActivityCategory
+            activity_svc = SpbuActivityService(self.db)
+            fuel_name = fuel_type.name
+            await activity_svc.log_activity(
+                gas_station_id=current_station.id,
+                category=SpbuActivityCategory.Penjualan,
+                detail=f"Penjualan {fuel_name} sebesar {float(fuel_tx.liters):.1f} Liter untuk Plat {fuel_tx.plate_number_snapshot} berhasil diproses.",
+                user_id=current_user.id
+            )
+        except Exception as log_err:
+            logger.error(f"Failed to log fuel purchase activity: {log_err}")
 
         try:
             from app.modules.notifications.service import NotificationService
@@ -2074,6 +2132,20 @@ class TransactionService:
 
         await self.db.commit()
         await self.db.refresh(log)
+
+        if new_status == FraudCaseStatus.RESOLVED:
+            try:
+                from app.modules.spbu_activities.service import SpbuActivityService
+                from app.modules.spbu_activities.models import SpbuActivityCategory
+                activity_svc = SpbuActivityService(self.db)
+                await activity_svc.log_activity(
+                    gas_station_id=log.gas_station_id,
+                    category=SpbuActivityCategory.Keamanan,
+                    detail=f"Tindakan cepat diambil terhadap Plat {log.plate_number_snapshot}. Kasus diselesaikan oleh {current_user.name}.",
+                    user_id=current_user.id
+                )
+            except Exception as log_err:
+                logger.error(f"Failed to log fraud resolution activity: {log_err}")
 
         buyer_name = log.buyer_profile.user.name if log.buyer_profile and log.buyer_profile.user else None
         resolved_by_name = current_user.name

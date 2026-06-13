@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_roles
@@ -252,14 +252,41 @@ async def read_admin_vehicle_submission_document(
 
 @router.put("/admin/requests/{request_id}/verify")
 async def verify_vehicle_request_admin(
+    request: Request,
     request_id: str,
     payload: VehicleOwnershipRequestVerify,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
 ) -> Any:
+    from app.modules.vehicles.models import VehicleOwnershipRequest
+    from sqlalchemy.future import select
+    from sqlalchemy.orm import selectinload
+    
+    # Fetch details for logging before verification changes state/ownership
+    stmt = select(VehicleOwnershipRequest).options(
+        selectinload(VehicleOwnershipRequest.buyer_profile)
+    ).filter(VehicleOwnershipRequest.id == request_id)
+    res = await db.execute(stmt)
+    req_obj = res.scalar_one_or_none()
+
     service = VehicleService(db)
-    return await service.verify_vehicle_request_admin(
+    result = await service.verify_vehicle_request_admin(
         request_id=request_id,
         status_str=payload.status,
         review_note=payload.review_note,
     )
+    
+    # Audit logging
+    from app.modules.system_audit_logs.service import SystemAuditLogService
+    ip = SystemAuditLogService.resolve_ip(request)
+    audit_svc = SystemAuditLogService(db)
+    
+    action_word = "Approve" if payload.status == "APPROVED" else "Reject"
+    nik = req_obj.buyer_profile.nik_snapshot if req_obj and req_obj.buyer_profile else (req_obj.ktp_nfc_id_snapshot if req_obj else "")
+    
+    await audit_svc.log_action(
+        actor=current_user,
+        action=f"{action_word} warga komersial: KTP {nik}",
+        ip_address=ip
+    )
+    return result

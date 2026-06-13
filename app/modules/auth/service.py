@@ -12,7 +12,7 @@ from app.core.security import ALGORITHM
 from app.core.config import settings
 from app.core.exceptions import CredentialsException
 from app.modules.auth.models import AuthSessionRecord
-from app.modules.users.models import User
+from app.modules.users.models import User, UserRole
 from app.modules.users.repository import UserRepository
 from app.modules.auth.schemas import LoginRequest, LoginResponse, LogoutResponse, RefreshTokenRequest, UserAuthResponse
 from app.modules.auth.utils import build_access_contexts, get_allowed_apps, validate_client_access
@@ -41,6 +41,18 @@ class AuthService:
                 detail=f"User does not have access to {request.client_type}"
             )
             
+        if user.gas_station_id:
+            from app.modules.spbu_activities.service import SpbuActivityService
+            from app.modules.spbu_activities.models import SpbuActivityCategory
+            role_str = "Admin SPBU" if UserRole.SPBU_ADMIN in user.role else "Kasir/Petugas"
+            activity_svc = SpbuActivityService(self.db)
+            await activity_svc.log_activity(
+                gas_station_id=user.gas_station_id,
+                category=SpbuActivityCategory.Sistem,
+                detail=f"{role_str} {user.name} berhasil login ke sistem.",
+                user_id=user.id
+            )
+
         return await self._build_login_response(user=user, client_type=request.client_type)
 
     async def refresh(self, request: RefreshTokenRequest) -> LoginResponse:
@@ -97,6 +109,19 @@ class AuthService:
             client_type=client_type,
             expires_at=expires_at,
         )
+
+        if user.gas_station_id:
+            from app.modules.spbu_activities.service import SpbuActivityService
+            from app.modules.spbu_activities.models import SpbuActivityCategory
+            role_str = "Admin SPBU" if UserRole.SPBU_ADMIN in user.role else "Kasir/Petugas"
+            activity_svc = SpbuActivityService(self.db)
+            await activity_svc.log_activity(
+                gas_station_id=user.gas_station_id,
+                category=SpbuActivityCategory.Sistem,
+                detail=f"{role_str} {user.name} berhasil logout dari sistem.",
+                user_id=user.id
+            )
+
         return LogoutResponse(message="Logged out successfully")
 
     async def ensure_session_is_active(
