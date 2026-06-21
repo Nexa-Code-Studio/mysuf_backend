@@ -58,6 +58,8 @@ async def main() -> None:
 
         station_by_name = {s.name: s for s in station_list}
         surabaya_stations = [s for s in station_list if s.name in SURABAYA_STATION_NAMES]
+        if not surabaya_stations and station_list:
+            surabaya_stations = station_list[:6]
 
         fuels_result = await session.execute(select(FuelType))
         fuels = fuels_result.scalars().all()
@@ -198,9 +200,10 @@ async def main() -> None:
             )
 
         def make_fraud_log(bp, vehicle, plate, station, risk_score, risk_level, action, detected_frauds, tx_id=None, created=None):
+            from uuid import uuid4
             return FraudLog(
                 id=uuid7(),
-                case_id=f"FR-{created.strftime('%y%m%d') if created else now.strftime('%y%m%d')}-{uuid7().hex[:4].upper()}",
+                case_id=f"FR-{created.strftime('%y%m%d') if created else now.strftime('%y%m%d')}-{uuid4().hex[:6].upper()}",
                 fuel_transaction_id=tx_id,
                 gas_station_id=station.id if station else None,
                 buyer_profile_id=bp.id if bp else None,
@@ -221,6 +224,8 @@ async def main() -> None:
                 "SPBU Pertamina 44.509.01 (Jember)",
                 "SPBU Pertamina 44.505.01 (Malang)",
             ]]
+            if not far_stations:
+                far_stations = station_list[6:9] if len(station_list) > 6 else station_list
 
             # 10x RAPID_PURCHASE chains (SUSPICIOUS, 25 pts)
             for _ in range(10):
