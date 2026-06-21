@@ -1165,19 +1165,6 @@ class TransactionService:
                     buyer_profile.risk_score = Decimal("0.00")
                     buyer_profile.user.frozen_until = None
                     await self.db.commit()
-                else:
-                    remaining = buyer_profile.user.frozen_until - datetime.utcnow()
-                    hours = int(remaining.total_seconds() // 3600)
-                    minutes = int((remaining.total_seconds() % 3600) // 60)
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Transaksi ditolak. Akun pembeli ini telah dibekukan sementara hingga {buyer_profile.user.frozen_until.strftime('%Y-%m-%d %H:%M:%S')} UTC. Tersisa {hours} jam {minutes} menit.",
-                    )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Transaksi ditolak. Akun pembeli ini telah dibekukan sementara oleh sistem keamanan.",
-                )
 
         wallet = None
         if require_wallet_payment:
@@ -1238,13 +1225,9 @@ class TransactionService:
             liters=request.liters,
         )
 
-        if fraud_assessment["action"] in {"FREEZE ACCOUNT", "BLOCK ACCOUNT"}:
-            if fraud_assessment["action"] == "BLOCK ACCOUNT":
-                buyer_profile.verification_status = VerificationStatus.REJECTED
-                detail_msg = "Transaksi dibatalkan & akun diblokir permanen karena terdeteksi pola kecurangan kritikal."
-            else:
-                buyer_profile.verification_status = VerificationStatus.UNVERIFIED
-                detail_msg = "Transaksi dibatalkan & akun dibekukan karena terdeteksi aktivitas mencurigakan berisiko tinggi."
+        if fraud_assessment["action"] == "BLOCK ACCOUNT":
+            buyer_profile.verification_status = VerificationStatus.REJECTED
+            detail_msg = "Transaksi dibatalkan & akun diblokir permanen karena terdeteksi pola kecurangan kritikal."
 
             # Automatically log the fraud incident before blocking
             await self._create_fraud_log(
