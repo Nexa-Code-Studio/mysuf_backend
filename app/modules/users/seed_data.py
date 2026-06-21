@@ -27,21 +27,17 @@ from app.modules.wallets.models import Wallet, OwnerType
 
 
 BUYERS_TO_SEED = [
-    {
-        "nik": "3201010101010001",
-        "email": "buyer@mysuf.com",
-        "name": "Ahmad Sulaiman",
-    },
-    {
-        "nik": "3511111411040003",
-        "email": "ekya@mysuf.com",
-        "name": "EKYA MUHAMMAD HASFI FADLILURRAHMAN",
-    },
-    {
-        "nik": "3201010101010002",
-        "email": "siti@mysuf.com",
-        "name": "Siti Rahmawati",
-    },
+    {"nik": "3201010101010001", "email": "buyer@mysuf.com", "name": "Ahmad Sulaiman"},
+    {"nik": "3511111411040003", "email": "ekya@mysuf.com", "name": "EKYA MUHAMMAD HASFI FADLILURRAHMAN"},
+    {"nik": "3201010101010002", "email": "siti@mysuf.com", "name": "Siti Rahmawati"},
+    {"nik": "3201010101010003", "email": "budi@mysuf.com", "name": "Budi Hartono"},
+    {"nik": "3201010101010004", "email": "dewi@mysuf.com", "name": "Dewi Lestari"},
+    {"nik": "3201010101010005", "email": "rizky@mysuf.com", "name": "Rizky Maulana"},
+    {"nik": "3201010101010006", "email": "nadia@mysuf.com", "name": "Nadia Khairunnisa"},
+    {"nik": "3201010101010007", "email": "fajar@mysuf.com", "name": "Fajar Nugroho"},
+    {"nik": "3201010101010008", "email": "putri@mysuf.com", "name": "Putri Ayuningtyas"},
+    {"nik": "3201010101010009", "email": "yusuf@mysuf.com", "name": "Yusuf Hidayat"},
+    {"nik": "3201010101010010", "email": "intan@mysuf.com", "name": "Intan Permatasari"},
 ]
 
 async def seed_users(session: AsyncSession) -> dict[str, int]:
