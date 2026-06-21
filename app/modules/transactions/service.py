@@ -1052,6 +1052,7 @@ class TransactionService:
         is_currently_frozen_or_blocked = is_blocked or is_frozen
         
         if fraud_assessment["risk_score"] > 30 or is_newly_frozen_or_blocked or is_currently_frozen_or_blocked:
+            print(f"[DEBUG_FRAUD_LOG] Creating fraud log for NIK {buyer_profile.nik_snapshot}. Risk Score: {buyer_profile.risk_score}, Action: {fraud_assessment.get('action')}, Currently Frozen/Blocked: {is_currently_frozen_or_blocked}", flush=True)
             log_assessment = fraud_assessment.copy()
             if is_newly_frozen_or_blocked or is_currently_frozen_or_blocked:
                 log_assessment["risk_score"] = float(buyer_profile.risk_score)
