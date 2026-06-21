@@ -24,7 +24,8 @@ from app.modules.transactions.models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TARGET_EMAIL = "ekya@mysuf.com"
+TARGET_EMAILS = ["ekya@mysuf.com", "ekyamuhammad@gmail.com"]
+TARGET_NIK = "3511111411040003"
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,87 +42,107 @@ def parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = parse_args()
-    logger.info("Resetting fraud state for buyer: %s", TARGET_EMAIL)
+    logger.info("Resetting fraud state for buyer: %s / %s", TARGET_EMAILS, TARGET_NIK)
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User)
-            .options(selectinload(User.buyer_profile))
-            .filter(User.email == TARGET_EMAIL)
-        )
-        user = result.scalars().first()
-        if not user:
-            logger.error("User '%s' not found. Has the seed been run?", TARGET_EMAIL)
-            return
-
-        buyer_profile = user.buyer_profile
-        if not buyer_profile:
-            logger.error("BuyerProfile not found for user '%s'.", TARGET_EMAIL)
-            return
-
-        # 1. Delete cashier scan events referencing this buyer
-        await session.execute(
-            delete(CashierScanEvent).filter(
-                CashierScanEvent.buyer_profile_id == buyer_profile.id
+        # Find all buyer profiles matching NIK or emails
+        stmt = (
+            select(BuyerProfile)
+            .outerjoin(User, User.id == BuyerProfile.user_id)
+            .options(selectinload(BuyerProfile.user))
+            .filter(
+                (BuyerProfile.nik_snapshot == TARGET_NIK) |
+                (User.email.in_(TARGET_EMAILS))
             )
         )
+        result = await session.execute(stmt)
+        buyer_profiles = result.scalars().all()
 
-        # 2. Delete fraud logs referencing this buyer
-        await session.execute(
-            delete(FraudLog).filter(
-                FraudLog.buyer_profile_id == buyer_profile.id
-            )
-        )
+        if not buyer_profiles:
+            # Also reset user status directly if they exist but don't have buyer profiles
+            user_stmt = select(User).filter(User.email.in_(TARGET_EMAILS))
+            user_res = await session.execute(user_stmt)
+            users_without_profile = user_res.scalars().all()
+            if users_without_profile:
+                for u in users_without_profile:
+                    u.is_blocked = False
+                    u.frozen_until = None
+                    logger.info("Reset user without profile: %s", u.email)
+                await session.commit()
+            logger.info("No BuyerProfiles found matching the search criteria.")
+            return
 
-        if not args.keep_transactions:
-            # 3. Collect fuel transactions for this buyer
-            tx_result = await session.execute(
-                select(FuelTransaction).filter(
-                    FuelTransaction.buyer_profile_id == buyer_profile.id
+        for buyer_profile in buyer_profiles:
+            logger.info("Resetting BuyerProfile ID: %s, NIK: %s", buyer_profile.id, buyer_profile.nik_snapshot)
+            
+            # 1. Delete cashier scan events referencing this buyer
+            await session.execute(
+                delete(CashierScanEvent).filter(
+                    CashierScanEvent.buyer_profile_id == buyer_profile.id
                 )
             )
-            fuel_txs = tx_result.scalars().all()
-            fuel_tx_ids = [tx.id for tx in fuel_txs]
 
-            if fuel_tx_ids:
-                # 4. Collect & delete payment transactions referencing these fuel tx
-                pay_result = await session.execute(
-                    select(PaymentTransaction).filter(
-                        PaymentTransaction.fuel_transaction_id.in_(fuel_tx_ids)
+            # 2. Delete fraud logs referencing this buyer
+            await session.execute(
+                delete(FraudLog).filter(
+                    FraudLog.buyer_profile_id == buyer_profile.id
+                )
+            )
+
+            if not args.keep_transactions:
+                # 3. Collect fuel transactions for this buyer
+                tx_result = await session.execute(
+                    select(FuelTransaction).filter(
+                        FuelTransaction.buyer_profile_id == buyer_profile.id
                     )
                 )
-                payment_txs = pay_result.scalars().all()
-                for pt in payment_txs:
-                    # Delete wallet transactions that reference this payment tx
-                    await session.execute(
-                        delete(WalletTransaction).filter(
-                            WalletTransaction.payment_transaction_id == pt.id
+                fuel_txs = tx_result.scalars().all()
+                fuel_tx_ids = [tx.id for tx in fuel_txs]
+
+                if fuel_tx_ids:
+                    # 4. Collect & delete payment transactions referencing these fuel tx
+                    pay_result = await session.execute(
+                        select(PaymentTransaction).filter(
+                            PaymentTransaction.fuel_transaction_id.in_(fuel_tx_ids)
                         )
                     )
-                    await session.delete(pt)
+                    payment_txs = pay_result.scalars().all()
+                    for pt in payment_txs:
+                        # Delete wallet transactions that reference this payment tx
+                        await session.execute(
+                            delete(WalletTransaction).filter(
+                                WalletTransaction.payment_transaction_id == pt.id
+                            )
+                        )
+                        await session.delete(pt)
 
-                # 5. Detach wallet tx refs from fuel txs, then delete orphaned wallet txs
-                for ft in fuel_txs:
-                    wt_id = ft.wallet_transaction_id
-                    ft.wallet_transaction_id = None
-                    if wt_id:
-                        wt = await session.get(WalletTransaction, wt_id)
-                        if wt:
-                            await session.delete(wt)
+                    # 5. Detach wallet tx refs from fuel txs, then delete orphaned wallet txs
+                    for ft in fuel_txs:
+                        wt_id = ft.wallet_transaction_id
+                        ft.wallet_transaction_id = None
+                        if wt_id:
+                            wt = await session.get(WalletTransaction, wt_id)
+                            if wt:
+                                await session.delete(wt)
 
-                # 6. Delete fuel transactions
-                for ft in fuel_txs:
-                    await session.delete(ft)
+                    # 6. Delete fuel transactions
+                    for ft in fuel_txs:
+                        await session.delete(ft)
 
-                logger.info("Deleted %d FuelTransaction(s) and related records.", len(fuel_tx_ids))
+                    logger.info("Deleted %d FuelTransaction(s) and related records for BuyerProfile ID: %s.", len(fuel_tx_ids), buyer_profile.id)
 
-        # 7. Reset fraud fields on User and BuyerProfile
-        user.is_blocked = False
-        user.frozen_until = None
-        buyer_profile.risk_score = 0
-        buyer_profile.verification_status = VerificationStatus.VERIFIED
+            # 7. Reset fraud fields on User and BuyerProfile
+            buyer_profile.risk_score = 0
+            buyer_profile.verification_status = VerificationStatus.VERIFIED
+            
+            if buyer_profile.user:
+                buyer_profile.user.is_blocked = False
+                buyer_profile.user.frozen_until = None
+                logger.info("Reset linked User: %s", buyer_profile.user.email)
 
         await session.commit()
+
+    logger.info("Reset complete — EKYA can now be used for another fraud demo run.")
 
     logger.info("Reset complete — EKYA can now be used for another fraud demo run.")
 
