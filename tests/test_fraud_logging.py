@@ -273,3 +273,185 @@ async def test_automatic_fraud_logging_behavior():
             if kk_id:
                 await session.execute(delete(KK).where(KK.id == kk_id))
             await session.commit()
+
+
+@pytest.mark.anyio
+async def test_already_frozen_user_logging():
+    from datetime import timedelta
+    kk = KK(code=f"KK-FRAUD-FROZEN-{uuid4().hex[:8]}")
+    cashier_user = User(
+        name="Fraud Logger Cashier",
+        email=f"cashier-frozen-{uuid4().hex[:8]}@example.com",
+        password="hashed_password",
+        role=[UserRole.SALES_OFFICER],
+        is_active=True,
+    )
+    buyer_user = User(
+        name="Already Frozen Buyer",
+        email=f"buyer-frozen-{uuid4().hex[:8]}@example.com",
+        password="hashed_password",
+        role=[UserRole.BUYER],
+        is_active=True,
+        frozen_until=datetime.utcnow() + timedelta(hours=2),
+    )
+    buyer_profile = BuyerProfile(
+        nik_snapshot="3171022345678902",
+        ktp_nfc_id_snapshot=f"NFC-FROZEN-{uuid4().hex[:8]}",
+        kk=kk,
+        user=buyer_user,
+        verification_status=VerificationStatus.UNVERIFIED,
+        risk_score=Decimal("75.00"),
+    )
+    gas_station = GasStation(
+        name="Fraud Testing Station",
+        latitude=-6.200000,
+        longitude=106.800000,
+    )
+    fuel_type = FuelType(
+        name="Pertamax Non Subsidized",
+        octane="92",
+        category=FuelCategory.GASOLINE,
+        price_per_liter=Decimal("13000.00"),
+        subsidy_price_per_liter=Decimal("13000.00"),
+        subsidy_type=SubsidyType.NON_SUBSIDIZED,
+    )
+    registry_vehicle = VehicleRegistryMockup(
+        plate_number="B 9999 FRD",
+        registration_number=f"STNK-FZN-{uuid4().hex[:8]}",
+        brand="Honda",
+        vehicle_type="Civic",
+        manufacture_year=2021,
+        color="Biru",
+        engine_capacity_cc=1498,
+        pkb="4500000.00",
+        njkb="280000000.00",
+        owner_name="Frozen Buyer User",
+        owner_nik="3171022345678902",
+    )
+    ownership = VehicleOwnership(
+        owner_type=VehicleOwnerType.BUYER_PROFILE,
+        owner_id=None,
+        vehicle_id=None,
+        ownership_status=VehicleOwnershipStatus.PERSONAL,
+        usage_type=VehicleUsageType.PERSONAL,
+        quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
+        plate_number_snapshot="B 9999 FRD",
+        ktp_nfc_id_snapshot="NFC-SNAPSHOT-FZN",
+    )
+
+    kk_id = None
+    cashier_user_id = None
+    buyer_user_id = None
+    buyer_profile_id = None
+    gas_station_id = None
+    fuel_type_id = None
+    vehicle_registry_id = None
+    ownership_id = None
+
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add_all([kk, gas_station, fuel_type, registry_vehicle])
+            await session.commit()
+            await session.refresh(kk)
+            await session.refresh(gas_station)
+            await session.refresh(fuel_type)
+            await session.refresh(registry_vehicle)
+
+            gas_station_id = gas_station.id
+            fuel_type_id = fuel_type.id
+            vehicle_registry_id = registry_vehicle.id
+
+            cashier_user.gas_station_id = gas_station.id
+            session.add(cashier_user)
+            session.add(buyer_user)
+            await session.commit()
+            await session.refresh(cashier_user)
+            await session.refresh(buyer_user)
+            cashier_user_id = cashier_user.id
+            buyer_user_id = buyer_user.id
+
+            buyer_profile.kk_id = kk.id
+            buyer_profile.user_id = buyer_user.id
+            session.add(buyer_profile)
+            await session.commit()
+            await session.refresh(buyer_profile)
+            buyer_profile_id = buyer_profile.id
+
+            ownership.owner_id = buyer_profile.id
+            ownership.vehicle_id = registry_vehicle.id
+            session.add(ownership)
+            await session.commit()
+            await session.refresh(ownership)
+            ownership_id = ownership.id
+
+        async with AsyncSessionLocal() as session:
+            service = TransactionService(db=session)
+
+            class MockPurchaseRequest:
+                plate_number = "B 9999 FRD"
+                nik = "3171022345678902"
+                gas_station_id = gas_station.id
+                fuel_type_id = fuel_type.id
+                liters = Decimal("10.00")
+                total_amount = Decimal("130000.00")
+
+            request = MockPurchaseRequest()
+
+            # Mock _evaluate_fraud to return SAFE (0 risk score)
+            async def mock_eval_safe(*args, **kwargs):
+                return {
+                    "detected_frauds": [],
+                    "risk_score": 0,
+                    "risk_level": "SAFE",
+                    "action": "ALLOW TRANSACTION"
+                }
+
+            service._evaluate_fraud = mock_eval_safe
+
+            # Execute context preparation (which handles fraud log trigger)
+            context = await service._prepare_fuel_purchase_context(
+                current_user=cashier_user,
+                request=request,
+                require_wallet_payment=False
+            )
+            await session.commit()
+
+            # Check that a fraud log WAS created for the already frozen buyer
+            result = await session.execute(
+                select(FraudLog).filter(
+                    FraudLog.buyer_profile_id == buyer_profile.id,
+                )
+            )
+            logs = result.scalars().all()
+            assert len(logs) == 1
+            log = logs[0]
+            assert log.risk_score == 75
+            assert log.risk_level == FraudRiskLevel.HIGH_RISK
+            assert log.action_taken == FraudActionTaken.FREEZE_ACCOUNT
+            assert len(log.detected_frauds) == 1
+            assert log.detected_frauds[0]["type"] == "SUSPENDED_USER_ACTIVITY"
+
+    finally:
+        async with AsyncSessionLocal() as session:
+            from app.modules.wallets.models import Wallet
+            if buyer_profile_id:
+                await session.execute(delete(FraudLog).where(FraudLog.buyer_profile_id == buyer_profile_id))
+            if ownership_id:
+                await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id == ownership_id))
+            if vehicle_registry_id:
+                await session.execute(delete(VehicleRegistryMockup).where(VehicleRegistryMockup.id == vehicle_registry_id))
+            if buyer_profile_id:
+                await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
+            if buyer_user_id:
+                await session.execute(delete(Wallet).where(Wallet.owner_id == buyer_user_id))
+            if cashier_user_id:
+                await session.execute(delete(User).where(User.id == cashier_user_id))
+            if buyer_user_id:
+                await session.execute(delete(User).where(User.id == buyer_user_id))
+            if fuel_type_id:
+                await session.execute(delete(FuelType).where(FuelType.id == fuel_type_id))
+            if gas_station_id:
+                await session.execute(delete(GasStation).where(GasStation.id == gas_station_id))
+            if kk_id:
+                await session.execute(delete(KK).where(KK.id == kk_id))
+            await session.commit()

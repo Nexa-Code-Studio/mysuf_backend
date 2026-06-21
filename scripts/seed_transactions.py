@@ -91,8 +91,15 @@ async def main() -> None:
         def random_date(days_back: int) -> datetime:
             days_ago = random.randint(0, days_back)
             d = now - timedelta(days=days_ago)
-            hour = random.randint(6, 20)
-            minute = random.randint(0, 59)
+            if days_ago == 0:
+                hour = random.randint(6, max(6, now.hour))
+                if hour == now.hour:
+                    minute = random.randint(0, max(0, now.minute))
+                else:
+                    minute = random.randint(0, 59)
+            else:
+                hour = random.randint(6, 20)
+                minute = random.randint(0, 59)
             return d.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
         def pick_vehicle(bp_id) -> tuple:
