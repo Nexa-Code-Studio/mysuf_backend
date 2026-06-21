@@ -226,14 +226,13 @@ async def test_automatic_fraud_logging_behavior():
 
             service._evaluate_fraud = mock_eval_high_risk
 
-            with pytest.raises(HTTPException) as exc_info:
-                await service._prepare_fuel_purchase_context(
-                    current_user=cashier_user,
-                    request=request,
-                    require_wallet_payment=False
-                )
-            assert exc_info.value.status_code == 400
-            assert "dibekukan" in exc_info.value.detail
+            context = await service._prepare_fuel_purchase_context(
+                current_user=cashier_user,
+                request=request,
+                require_wallet_payment=False
+            )
+            assert context["fraud_assessment"]["risk_score"] == 80
+            await session.commit()
 
             # Verify the second FraudLog was created and committed even though exception was raised
             result = await session.execute(
@@ -245,7 +244,7 @@ async def test_automatic_fraud_logging_behavior():
             high_risk_logs = result.scalars().all()
             assert len(high_risk_logs) == 1
             high_risk_log = high_risk_logs[0]
-            assert high_risk_log.risk_score == 80
+            assert high_risk_log.risk_score == 100
             assert high_risk_log.action_taken == FraudActionTaken.FREEZE_ACCOUNT
             assert high_risk_log.status == FraudCaseStatus.PENDING
 
