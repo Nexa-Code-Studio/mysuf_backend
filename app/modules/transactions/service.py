@@ -1158,10 +1158,26 @@ class TransactionService:
                 detail="Transaksi ditolak. Akun pembeli ini telah diblokir permanen oleh sistem keamanan.",
             )
         if buyer_profile.verification_status == VerificationStatus.UNVERIFIED:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Transaksi ditolak. Akun pembeli ini telah dibekukan sementara oleh sistem keamanan.",
-            )
+            if buyer_profile.user and buyer_profile.user.frozen_until:
+                if buyer_profile.user.frozen_until <= datetime.utcnow():
+                    # Freeze duration has expired, restore verification status
+                    buyer_profile.verification_status = VerificationStatus.VERIFIED
+                    buyer_profile.risk_score = Decimal("0.00")
+                    buyer_profile.user.frozen_until = None
+                    await self.db.commit()
+                else:
+                    remaining = buyer_profile.user.frozen_until - datetime.utcnow()
+                    hours = int(remaining.total_seconds() // 3600)
+                    minutes = int((remaining.total_seconds() % 3600) // 60)
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Transaksi ditolak. Akun pembeli ini telah dibekukan sementara hingga {buyer_profile.user.frozen_until.strftime('%Y-%m-%d %H:%M:%S')} UTC. Tersisa {hours} jam {minutes} menit.",
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Transaksi ditolak. Akun pembeli ini telah dibekukan sementara oleh sistem keamanan.",
+                )
 
         wallet = None
         if require_wallet_payment:
@@ -1303,6 +1319,15 @@ class TransactionService:
             )
 
         if fraud_assessment["risk_score"] > 0:
+            # Capture original user status to detect transitions to freeze/block
+            was_frozen = False
+            was_blocked = False
+            if buyer_profile.user:
+                was_blocked = getattr(buyer_profile.user, "is_blocked", False)
+                frozen_until = getattr(buyer_profile.user, "frozen_until", None)
+                if frozen_until and frozen_until > datetime.utcnow():
+                    was_frozen = True
+
             buyer_profile.risk_score = min(
                 Decimal("100.00"),
                 buyer_profile.risk_score + Decimal(str(fraud_assessment["risk_score"])),
@@ -1310,14 +1335,39 @@ class TransactionService:
             from app.modules.users.service import UserService
             if buyer_profile.user:
                 UserService.update_user_fraud_status(buyer_profile.user, float(buyer_profile.risk_score))
+                
+                # Sync verification_status back to buyer_profile
+                if buyer_profile.user.is_blocked:
+                    buyer_profile.verification_status = VerificationStatus.REJECTED
+                elif buyer_profile.user.frozen_until and buyer_profile.user.frozen_until > datetime.utcnow():
+                    buyer_profile.verification_status = VerificationStatus.UNVERIFIED
 
-            # Automatically log suspicious but allowed transactions
-            if fraud_assessment["risk_score"] > 30:
+            # Check if user has transitioned to frozen or blocked status
+            is_blocked = False
+            is_frozen = False
+            if buyer_profile.user:
+                is_blocked = getattr(buyer_profile.user, "is_blocked", False)
+                frozen_until = getattr(buyer_profile.user, "frozen_until", None)
+                if frozen_until and frozen_until > datetime.utcnow():
+                    is_frozen = True
+
+            is_newly_frozen_or_blocked = (is_blocked and not was_blocked) or (is_frozen and not was_frozen)
+
+            # Automatically log suspicious but allowed transactions OR if the transaction triggered a freeze/block
+            if fraud_assessment["risk_score"] > 30 or is_newly_frozen_or_blocked:
+                log_assessment = fraud_assessment.copy()
+                if is_newly_frozen_or_blocked:
+                    log_assessment["risk_score"] = float(buyer_profile.risk_score)
+                    if is_blocked:
+                        log_assessment["action"] = "BLOCK ACCOUNT"
+                    elif is_frozen:
+                        log_assessment["action"] = "FREEZE ACCOUNT"
+
                 await self._create_fraud_log(
                     buyer_profile=buyer_profile,
                     vehicle_ownership=vehicle_ownership,
                     current_station=current_station,
-                    fraud_assessment=fraud_assessment,
+                    fraud_assessment=log_assessment,
                 )
 
         return {

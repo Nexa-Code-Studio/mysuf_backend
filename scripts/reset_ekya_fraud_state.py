@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -44,7 +45,9 @@ async def main() -> None:
 
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).filter(User.email == TARGET_EMAIL)
+            select(User)
+            .options(selectinload(User.buyer_profile))
+            .filter(User.email == TARGET_EMAIL)
         )
         user = result.scalars().first()
         if not user:
