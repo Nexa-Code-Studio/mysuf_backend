@@ -166,58 +166,6 @@ class FuelPurchaseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class QrisFuelPurchaseRequest(BaseModel):
-    nik: str
-    plate_number: str
-    fuel_type_id: UUID
-    liters: Decimal
-    total_amount: Decimal
-
-    @field_validator("liters")
-    @classmethod
-    def validate_liters(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("Volume pembelian harus lebih besar dari 0 liter.")
-        return v
-
-    @field_validator("total_amount")
-    @classmethod
-    def validate_total_amount(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("Total harga pembelian harus lebih besar dari Rp 0.")
-        return v
-
-
-class QrisFuelPurchaseResponse(BaseModel):
-    transaction_id: UUID
-    provider_reference_id: str
-    external_id: str
-    qr_string: str
-    total_amount: Decimal
-    fuel_name: str
-    liters: Decimal
-    plate_number: str
-    status: str
-    expires_at: datetime | None = None
-    detected_frauds: List[dict] = []
-    risk_score: int = 0
-    risk_level: str = "SAFE"
-    action_taken: str = "ALLOW TRANSACTION"
-
-
-class QrisFuelPurchaseStatusResponse(BaseModel):
-    transaction_id: UUID
-    provider_reference_id: str
-    status: str
-    payment_status: PaymentStatus
-    total_amount: Decimal
-    fuel_name: str
-    liters: Decimal
-    plate_number: str
-    expires_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
 
 class XenditFuelPurchaseRequest(BaseModel):
     nik: str

@@ -54,12 +54,43 @@ def upgrade() -> None:
     # Step 3 – Migrate data: remap obsolete values to nearest equivalent
     # UMKM -> COMMERCIAL_MOTORCYCLE (closest business intent)
     # COMPANY_OPERATIONAL -> COMMERCIAL_MOTORCYCLE (closest business intent)
-    for table in ("vehicle_ownerships", "vehicle_ownership_requests", "subsidy_policies"):
+    for table in ("vehicle_ownerships", "vehicle_ownership_requests"):
         bind.execute(
             text(f"UPDATE {table} SET usage_type = 'COMMERCIAL_MOTORCYCLE' WHERE usage_type::text = 'UMKM'")
         )
         bind.execute(
             text(f"UPDATE {table} SET usage_type = 'COMMERCIAL_MOTORCYCLE' WHERE usage_type::text = 'COMPANY_OPERATIONAL'")
+        )
+
+    # For subsidy_policies, handle the unique constraint by merging obsolete rows
+    commercial_motorcycle_policy_id = bind.execute(
+        text("SELECT id FROM subsidy_policies WHERE usage_type::text = 'COMMERCIAL_MOTORCYCLE'")
+    ).scalar()
+
+    if commercial_motorcycle_policy_id:
+        obsolete_policy_ids = [
+            r[0] for r in bind.execute(
+                text("SELECT id FROM subsidy_policies WHERE usage_type::text IN ('UMKM', 'COMPANY_OPERATIONAL')")
+            ).fetchall()
+        ]
+        if obsolete_policy_ids:
+            # Update references in subsidy_quotas
+            bind.execute(
+                text("UPDATE subsidy_quotas SET subsidy_policy_id = :new_id WHERE subsidy_policy_id = ANY(:old_ids)"),
+                {"new_id": commercial_motorcycle_policy_id, "old_ids": obsolete_policy_ids}
+            )
+            # Delete obsolete policies
+            bind.execute(
+                text("DELETE FROM subsidy_policies WHERE id = ANY(:old_ids)"),
+                {"old_ids": obsolete_policy_ids}
+            )
+    else:
+        # Fallback if COMMERCIAL_MOTORCYCLE policy doesn't exist
+        bind.execute(
+            text("UPDATE subsidy_policies SET usage_type = 'COMMERCIAL_MOTORCYCLE' WHERE usage_type::text = 'UMKM'")
+        )
+        bind.execute(
+            text("UPDATE subsidy_policies SET usage_type = 'COMMERCIAL_MOTORCYCLE' WHERE usage_type::text = 'COMPANY_OPERATIONAL'")
         )
 
     # Step 4 – Remove obsolete enum values by recreating the type.

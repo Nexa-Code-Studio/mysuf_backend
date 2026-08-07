@@ -7,11 +7,6 @@ from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
-class VehicleClass(str, enum.Enum):
-    MOTORCYCLE = "MOTORCYCLE"
-    CAR = "CAR"
-    TRUCK = "TRUCK"
-
 class KK(Base):
     __tablename__ = "kk"
 
@@ -37,6 +32,9 @@ class CitizenRegistryMockup(Base):
     ktp_nfc_id = Column(String, nullable=False, unique=True)
     
     kk_id = Column(UUID(as_uuid=True), ForeignKey("kk.id"), nullable=False)
+    
+    pekerjaan = Column(String, nullable=True)
+    penghasilan = Column(Numeric(18, 2), nullable=True)
 
     # Relationships
     kk = relationship("KK")
@@ -47,35 +45,28 @@ class CitizenRegistryMockup(Base):
     )
 
 
+class VehicleClass(str, enum.Enum):
+    MOTORCYCLE = "MOTORCYCLE"
+    CAR = "CAR"
+    TRUCK = "TRUCK"
+
+
 class VehicleRegistryMockup(Base):
     __tablename__ = "vehicle_registry_mockup"
-    __table_args__ = (
-        Index("ix_vehicle_registry_mockup_plate_number", "plate_number"),
-        Index("ix_vehicle_registry_mockup_registration_number", "registration_number"),
-        Index("ix_vehicle_registry_mockup_owner_nik", "owner_nik"),
-    )
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
-
-    plate_number = Column(String, nullable=False)
-    registration_number = Column(String, nullable=False) # Nomor STNK
-
-    brand = Column(String, nullable=False)               # Merk Kendaraan
-    vehicle_type = Column(String, nullable=False)        # Tipe Kendaraan
-
-    manufacture_year = Column(Integer, nullable=False)   # Tahun Kendaraan
-
-    color = Column(String, nullable=False)               # Warna Kendaraan
-
-    engine_capacity_cc = Column(Integer, nullable=False) # Kapasitas Mesin (CC)
-
-    pkb = Column(Numeric(18, 2), nullable=False)         # Pajak Kendaraan Bermotor
-    njkb = Column(Numeric(18, 2), nullable=False)        # Nilai Jual Kendaraan Bermotor
-
+    plate_number = Column(String, nullable=True)
+    registration_number = Column(String, nullable=True)
+    brand = Column(String, nullable=True)
+    vehicle_type = Column(String, nullable=True)
+    manufacture_year = Column(Integer, nullable=True)
+    color = Column(String, nullable=True)
+    engine_capacity_cc = Column(Integer, nullable=True)
+    pkb = Column(Numeric(18, 2), nullable=True)
+    njkb = Column(Numeric(18, 2), nullable=True)
     owner_name = Column(String, nullable=True)
     owner_nik = Column(String, nullable=True)
-
     jenis = Column(Enum(VehicleClass, name="vehicle_class_enum"), nullable=True)
-
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
