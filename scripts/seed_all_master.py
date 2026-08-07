@@ -42,10 +42,9 @@ async def main(month: int | None = None, year: int | None = None) -> None:
         logger.info("1/7 Seeding Government Registry Mockups...")
         reg_summary = await seed_registry_mockups(session)
         logger.info(
-            "   [OK] KK seeded/existing: %s, Citizens: %s, Vehicles: %s",
+            "   [OK] KK seeded/existing: %s, Citizens: %s",
             reg_summary["kk"],
-            reg_summary["citizens"],
-            reg_summary["vehicles"]
+            reg_summary["citizens"]
         )
 
         # 2. Gas Stations

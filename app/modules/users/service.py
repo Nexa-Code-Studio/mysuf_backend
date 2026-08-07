@@ -259,11 +259,7 @@ class UserService:
                 detail="Buyer profile not found.",
             )
 
-        ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(buyer_profile.ktp_nfc_id_snapshot)
-        has_verified_vehicle = any(
-            ownership.usage_type == VehicleUsageType.PERSONAL
-            for ownership in ownerships
-        )
+        has_verified_vehicle = True
 
         current_time = datetime.utcnow()
         personal_quota = await self._build_personal_quota_payload(
@@ -277,8 +273,8 @@ class UserService:
         payload = {
             "vehicle_verification": {
                 "has_verified_vehicle": has_verified_vehicle,
-                "show_verify_vehicle_cta": not has_verified_vehicle,
-                "cta_route": "/vehicles/add",
+                "show_verify_vehicle_cta": False,
+                "cta_route": "/subsidy",
             },
             "personal_quota": personal_quota,
             "nearby_gas_stations": self._build_nearby_gas_stations(latitude, longitude),
@@ -501,6 +497,8 @@ class UserService:
         vehicles_count = 0
         quota_remaining = 0
         is_pin_active = False
+        pekerjaan = "LAINNYA"
+        penghasilan = 0.0
 
         # Fetch BuyerProfile
         profile_result = await db.execute(
@@ -526,29 +524,10 @@ class UserService:
             if buyer_profile.kk:
                 family_card_number = buyer_profile.kk.code
 
-            # isEligible
-            eligibility_result = await db.execute(
-                select(KKSubsidyEligibility)
-                .filter(KKSubsidyEligibility.kk_id == buyer_profile.kk_id)
-                .order_by(KKSubsidyEligibility.checked_at.desc(), KKSubsidyEligibility.id.desc())
-            )
-            eligibility = eligibility_result.scalars().first()
-            if eligibility:
-                is_eligible = eligibility.eligibility_status == EligibilityStatus.ELIGIBLE
-            else:
-                is_eligible = False
-
             # vehiclesCount
-            vehicles_result = await db.execute(
-                select(func.count(VehicleOwnership.id))
-                .filter(
-                    VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
-                    VehicleOwnership.owner_id == buyer_profile.id
-                )
-            )
-            vehicles_count = vehicles_result.scalar() or 0
+            vehicles_count = 0
 
-            # quotaRemaining
+            # quotaRemaining & isEligible
             now = datetime.utcnow()
             quota_result = await db.execute(
                 select(SubsidyQuota)
@@ -560,17 +539,21 @@ class UserService:
                 )
             )
             quota = quota_result.scalars().first()
-            if quota and is_eligible:
-                quota_remaining = int(quota.quota_liters - quota.used_liters)
-            elif is_eligible:
+            if quota is None:
                 quota = await self.subsidy_service.get_or_sync_personal_quota(
                     buyer_profile=buyer_profile,
                     month=now.month,
                     year=now.year,
                 )
-                quota_remaining = int(quota.quota_liters - quota.used_liters)
-            else:
-                quota_remaining = 0
+            is_eligible = quota.is_active if quota else False
+            quota_remaining = int(quota.quota_liters - quota.used_liters) if quota else 0
+
+            # Query Citizen details for job and income
+            from app.modules.registries.models import CitizenRegistryMockup
+            stmt_citizen = select(CitizenRegistryMockup).filter(CitizenRegistryMockup.nik == buyer_profile.nik_snapshot)
+            citizen = (await db.execute(stmt_citizen)).scalars().first()
+            pekerjaan = citizen.pekerjaan if citizen else "LAINNYA"
+            penghasilan = float(citizen.penghasilan) if citizen and citizen.penghasilan else 0.0
 
         return {
             "name": user.name,
@@ -581,7 +564,9 @@ class UserService:
             "vehiclesCount": vehicles_count,
             "quotaRemaining": quota_remaining,
             "walletBalance": wallet_balance,
-            "isPinActive": is_pin_active
+            "isPinActive": is_pin_active,
+            "pekerjaan": pekerjaan,
+            "penghasilan": penghasilan
         }
 
     async def get_buyer_quota_detail(self, user_id: str) -> dict:
@@ -620,33 +605,8 @@ class UserService:
             for fuel in fuels_result.scalars().all()
         ]
 
-        # 2. Fetch vehicles and total purchase liters
-        vehicles_query = (
-            select(VehicleOwnership, VehicleRegistryMockup.brand)
-            .join(VehicleRegistryMockup, VehicleOwnership.vehicle_id == VehicleRegistryMockup.id)
-            .filter(VehicleOwnership.ktp_nfc_id_snapshot == buyer_profile.ktp_nfc_id_snapshot)
-        )
-        vehicles_result = await self.repo.db.execute(vehicles_query)
-        
+        # 2. Return empty vehicles list (vehicles removed)
         vehicles_list = []
-        for ownership, brand in vehicles_result.all():
-            # Query completed fuel transactions sum for this vehicle ownership
-            liters_query = (
-                select(func.coalesce(func.sum(FuelTransaction.liters), 0))
-                .filter(
-                    FuelTransaction.vehicle_ownership_id == ownership.id,
-                    FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
-                )
-            )
-            liters_result = await self.repo.db.execute(liters_query)
-            total_liters = float(Decimal(liters_result.scalar()))
-
-            vehicles_list.append({
-                "id": ownership.id,
-                "plate_number": ownership.plate_number_snapshot,
-                "brand": brand,
-                "total_liters_purchased": total_liters
-            })
 
         return {
             "personal_quota": personal_quota,

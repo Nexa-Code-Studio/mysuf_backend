@@ -12,10 +12,6 @@ from app.modules.registries.schemas import (
     KKListResponse,
     KKResponse,
     KKUpdate,
-    VehicleCreate,
-    VehicleListResponse,
-    VehicleResponse,
-    VehicleUpdate,
 )
 from app.modules.registries.service import RegistryService
 
@@ -152,68 +148,3 @@ async def delete_citizen(
     service = RegistryService(db)
     await service.delete_citizen(citizen_id)
 
-
-# ====================================================
-# Vehicle Registry Mockup Endpoints
-# ====================================================
-
-@router.get("/vehicles", response_model=VehicleListResponse)
-async def read_vehicles(
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Retrieve vehicle registry mockup entries with pagination.
-    """
-    service = RegistryService(db)
-    return await service.get_vehicles(page=page, page_size=page_size)
-
-
-@router.get("/vehicles/{vehicle_id}", response_model=VehicleResponse)
-async def read_vehicle(
-    vehicle_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Retrieve a specific vehicle registry entry by its UUID.
-    """
-    service = RegistryService(db)
-    return await service.get_vehicle(vehicle_id)
-
-
-@router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
-async def create_vehicle(
-    vehicle_in: VehicleCreate,
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Create a new vehicle registry entry.
-    """
-    service = RegistryService(db)
-    return await service.create_vehicle(vehicle_in)
-
-
-@router.put("/vehicles/{vehicle_id}", response_model=VehicleResponse)
-async def update_vehicle(
-    vehicle_id: str,
-    vehicle_in: VehicleUpdate,
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Update a vehicle registry entry.
-    """
-    service = RegistryService(db)
-    return await service.update_vehicle(vehicle_id, vehicle_in)
-
-
-@router.delete("/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_vehicle(
-    vehicle_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """
-    Delete a vehicle registry entry.
-    """
-    service = RegistryService(db)
-    await service.delete_vehicle(vehicle_id)

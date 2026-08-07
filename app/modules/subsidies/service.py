@@ -92,17 +92,54 @@ class SubsidyService:
         current_time = datetime.utcnow()
         target_month = month or current_time.month
         target_year = year or current_time.year
-        policy = await self.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
-        if not policy:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Subsidy policy for usage type PERSONAL not found",
-            )
 
+        # 1. Look up the citizen in the mockup registry
+        from app.modules.registries.models import CitizenRegistryMockup
+        from sqlalchemy import select
+        
+        stmt = select(CitizenRegistryMockup).filter(CitizenRegistryMockup.nik == buyer_profile.nik_snapshot)
+        citizen = (await self.repo.db.execute(stmt)).scalars().first()
+        
+        # 2. Fetch the subsidy setting
+        from app.modules.subsidies.models import SubsidySetting
+        setting_stmt = select(SubsidySetting)
+        setting = (await self.repo.db.execute(setting_stmt)).scalars().first()
+        
+        # Set default values if setting not found (fallback)
+        income_threshold = Decimal("5000000.00")
+        default_quota = Decimal("100.00")
+        bonuses = {"OJOL": Decimal("50.00"), "NELAYAN": Decimal("100.00"), "UMKM": Decimal("50.00")}
+        
+        if setting:
+            income_threshold = Decimal(setting.income_threshold)
+            default_quota = Decimal(setting.default_quota_liters)
+            bonuses = {k: Decimal(str(v)) for k, v in setting.occupation_bonuses.items()}
+            
+        # 3. Calculate base quota based on income and job
+        is_eligible = False
+        base_quota = Decimal("0.00")
+        reason = ""
+        
+        if citizen:
+            income = Decimal(citizen.penghasilan or 0)
+            job = citizen.pekerjaan or "LAINNYA"
+            if income <= income_threshold:
+                is_eligible = True
+                bonus = bonuses.get(job, Decimal("0.00"))
+                base_quota = default_quota + bonus
+                reason = f"Penghasilan Rp {income:,.2f} di bawah batas Rp {income_threshold:,.2f}. Pekerjaan: {job} (Tambahan: {bonus}L)."
+            else:
+                reason = f"Penghasilan Rp {income:,.2f} di atas batas Rp {income_threshold:,.2f}."
+        else:
+            reason = "Data kependudukan tidak ditemukan."
+            
+        # 4. Apply risk score trust factor
         computed_quota = self._compute_personal_quota_liters(
-            monthly_quota_liters=Decimal(policy.monthly_quota_liters),
+            monthly_quota_liters=base_quota,
             risk_score=Decimal(buyer_profile.risk_score),
         )
+        
+        # 5. Fetch or create SubsidyQuota record in the database
         quota = await self.repo.get_subsidy_quota(
             SubsidyOwnerType.BUYER_PROFILE,
             buyer_profile.id,
@@ -110,26 +147,19 @@ class SubsidyService:
             target_year,
         )
         if quota:
-            changed = False
-            if quota.subsidy_policy_id is None or quota.subsidy_policy_id != policy.id:
-                quota.subsidy_policy_id = policy.id
-                changed = True
             if Decimal(quota.quota_liters) != computed_quota:
                 quota.quota_liters = computed_quota
-                changed = True
-            if changed:
                 quota = await self.repo.update_subsidy_quota(quota)
             return quota
 
         quota = SubsidyQuota(
             owner_type=SubsidyOwnerType.BUYER_PROFILE,
             owner_id=buyer_profile.id,
-            subsidy_policy_id=policy.id,
             month=target_month,
             year=target_year,
             quota_liters=computed_quota,
             used_liters=0,
-            is_active=True,
+            is_active=is_eligible,
         )
         return await self.repo.create_subsidy_quota(quota)
 

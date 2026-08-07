@@ -8,14 +8,7 @@ from app.modules.users.models import User, UserRole, BuyerProfile, VerificationS
 from app.modules.companies.models import Company
 from app.modules.gas_stations.models import GasStation
 from app.core.security import get_password_hash
-from app.modules.registries.models import CitizenRegistryMockup, VehicleRegistryMockup
-from app.modules.vehicles.models import (
-    VehicleOwnership,
-    VehicleOwnerType,
-    VehicleOwnershipStatus,
-    VehicleUsageType,
-    VehicleQuotaMode,
-)
+from app.modules.registries.models import CitizenRegistryMockup
 from app.modules.buyer_registrations.models import (
     BuyerRegistrationAttempt,
     BuyerRegistrationStatus,
@@ -452,49 +445,7 @@ async def seed_buyer_user(session: AsyncSession) -> dict[str, int]:
                 wallet.is_active = True
                 repaired_current_buyer = True
 
-        # 9. Automatically seed VehicleOwnership for all vehicles owned by this citizen in the mock registry
-        result_vehicles = await session.execute(
-            select(VehicleRegistryMockup).filter(VehicleRegistryMockup.owner_nik == citizen.nik)
-        )
-        vehicles = result_vehicles.scalars().all()
-        for vehicle in vehicles:
-            result = await session.execute(
-                select(VehicleOwnership).filter(
-                    VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
-                    VehicleOwnership.owner_id == buyer_profile.id,
-                    VehicleOwnership.vehicle_id == vehicle.id,
-                )
-            )
-            ownership = result.scalars().first()
-            if ownership is None:
-                ownership = VehicleOwnership(
-                    owner_type=VehicleOwnerType.BUYER_PROFILE,
-                    owner_id=buyer_profile.id,
-                    vehicle_id=vehicle.id,
-                    ownership_status=VehicleOwnershipStatus.PERSONAL,
-                    usage_type=VehicleUsageType.PERSONAL,
-                    quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
-                    plate_number_snapshot=vehicle.plate_number,
-                    ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
-                )
-                session.add(ownership)
-                created_current_buyer = True
-            else:
-                if ownership.ownership_status != VehicleOwnershipStatus.PERSONAL:
-                    ownership.ownership_status = VehicleOwnershipStatus.PERSONAL
-                    repaired_current_buyer = True
-                if ownership.usage_type != VehicleUsageType.PERSONAL:
-                    ownership.usage_type = VehicleUsageType.PERSONAL
-                    repaired_current_buyer = True
-                if ownership.quota_mode != VehicleQuotaMode.OWNER_PERSONAL_QUOTA:
-                    ownership.quota_mode = VehicleQuotaMode.OWNER_PERSONAL_QUOTA
-                    repaired_current_buyer = True
-                if ownership.plate_number_snapshot != vehicle.plate_number:
-                    ownership.plate_number_snapshot = vehicle.plate_number
-                    repaired_current_buyer = True
-                if ownership.ktp_nfc_id_snapshot != buyer_profile.ktp_nfc_id_snapshot:
-                    ownership.ktp_nfc_id_snapshot = buyer_profile.ktp_nfc_id_snapshot
-                    repaired_current_buyer = True
+
 
         if created_current_buyer:
             summary["created"] += 1

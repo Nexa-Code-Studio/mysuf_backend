@@ -5,8 +5,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.subsidies.models import SubsidyOwnerType, SubsidyPolicy, SubsidyQuota
-from app.modules.vehicles.models import VehicleOwnership, VehicleQuotaMode, VehicleUsageType
+from app.modules.subsidies.models import SubsidyOwnerType, SubsidyPolicy, SubsidyQuota, SubsidySetting, KKSubsidyEligibility
+from app.modules.vehicles.models import VehicleUsageType
 
 
 DEFAULT_SUBSIDY_POLICY_SEED_DATA = [
@@ -104,6 +104,19 @@ async def seed_subsidy_policies(
     return summary
 
 
+async def seed_subsidy_settings(session: AsyncSession) -> None:
+    result = await session.execute(select(SubsidySetting))
+    setting = result.scalars().first()
+    if setting is None:
+        setting = SubsidySetting(
+            income_threshold=Decimal("5000000.00"),
+            default_quota_liters=Decimal("100.00"),
+            occupation_bonuses={"OJOL": 50.0, "NELAYAN": 100.0, "UMKM": 50.0}
+        )
+        session.add(setting)
+        await session.commit()
+
+
 async def seed_subsidy_quotas(
     session: AsyncSession,
     month: int | None = None,
@@ -114,69 +127,79 @@ async def seed_subsidy_quotas(
     target_year = year or current_time.year
 
     await seed_subsidy_policies(session)
+    await seed_subsidy_settings(session)
 
-    ownerships = list(
+    from app.modules.users.models import BuyerProfile
+    from app.modules.subsidies.service import SubsidyService
+
+    buyer_profiles = list(
         (
             await session.execute(
-                select(VehicleOwnership).order_by(VehicleOwnership.created_at, VehicleOwnership.id)
+                select(BuyerProfile).order_by(BuyerProfile.timestamp, BuyerProfile.id)
             )
         ).scalars().all()
     )
+    
     summary = {
         "created": 0,
         "existing": 0,
         "processed": 0,
         "month": target_month,
         "year": target_year,
-        "usage_types": {usage_type.value: 0 for usage_type in VehicleUsageType},
     }
 
-    policies = {
-        policy.usage_type: policy
-        for policy in (
-            await session.execute(select(SubsidyPolicy))
-        ).scalars().all()
-    }
+    from app.modules.subsidies.models import EligibilityStatus
+    from app.modules.vehicles.models import VehicleUsageType
 
-    for ownership in ownerships:
-        owner_type, owner_id = _resolve_quota_owner_for_seed(ownership)
+    # Fetch the PERSONAL subsidy policy
+    personal_policy = await session.scalar(
+        select(SubsidyPolicy).where(
+            SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL
+        )
+    )
+
+    subsidy_service = SubsidyService(session)
+    for profile in buyer_profiles:
+        # Check if KKSubsidyEligibility already exists for this KK and the personal policy
+        if personal_policy:
+            existing_eligibility = await session.scalar(
+                select(KKSubsidyEligibility.id).where(
+                    KKSubsidyEligibility.kk_id == profile.kk_id,
+                    KKSubsidyEligibility.subsidy_policy_id == personal_policy.id,
+                )
+            )
+            if existing_eligibility is None:
+                new_eligibility = KKSubsidyEligibility(
+                    kk_id=profile.kk_id,
+                    subsidy_policy_id=personal_policy.id,
+                    total_njkb=Decimal("0.00"),
+                    eligibility_status=EligibilityStatus.ELIGIBLE,
+                    eligibility_reason="Seeded as eligible during master data setup.",
+                    checked_at=datetime.utcnow()
+                )
+                session.add(new_eligibility)
+                await session.flush()
+
+        # Check if quota already exists for this period
         existing_quota = await session.scalar(
             select(SubsidyQuota.id).where(
-                SubsidyQuota.owner_type == owner_type,
-                SubsidyQuota.owner_id == owner_id,
+                SubsidyQuota.owner_type == SubsidyOwnerType.BUYER_PROFILE,
+                SubsidyQuota.owner_id == profile.id,
                 SubsidyQuota.month == target_month,
                 SubsidyQuota.year == target_year,
             )
         )
-        policy = policies.get(ownership.usage_type)
-        if policy is None:
-            raise ValueError(f"Missing subsidy policy for usage type {ownership.usage_type.value}")
-
+        
+        await subsidy_service.get_or_sync_personal_quota(profile, target_month, target_year)
+        
         if existing_quota is None:
-            session.add(
-                SubsidyQuota(
-                    owner_type=owner_type,
-                    owner_id=owner_id,
-                    subsidy_policy_id=policy.id,
-                    month=target_month,
-                    year=target_year,
-                    quota_liters=policy.monthly_quota_liters,
-                    used_liters=0,
-                    is_active=True,
-                )
-            )
             summary["created"] += 1
         else:
             summary["existing"] += 1
 
         summary["processed"] += 1
-        summary["usage_types"][ownership.usage_type.value] += 1
 
     await session.commit()
     return summary
 
 
-def _resolve_quota_owner_for_seed(ownership: VehicleOwnership) -> tuple[SubsidyOwnerType, object]:
-    if ownership.quota_mode == VehicleQuotaMode.OWNER_PERSONAL_QUOTA:
-        return SubsidyOwnerType.BUYER_PROFILE, ownership.owner_id
-    return SubsidyOwnerType.VEHICLE, ownership.vehicle_id

@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from uuid_extensions import uuid7
 from sqlalchemy import Column, String, DateTime, Enum, Numeric, Boolean, Integer, ForeignKey, Index, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -96,3 +96,13 @@ class SubsidyQuota(Base):
     subsidy_policy = relationship("SubsidyPolicy", back_populates="subsidy_quotas")
     kk_subsidy_eligibility = relationship("KKSubsidyEligibility", back_populates="subsidy_quotas")
     fuel_transactions = relationship("FuelTransaction", back_populates="subsidy_quota")
+
+
+class SubsidySetting(Base):
+    __tablename__ = "subsidy_settings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
+    income_threshold = Column(Numeric(18, 2), nullable=False)
+    default_quota_liters = Column(Numeric(10, 2), nullable=False)
+    occupation_bonuses = Column(JSONB, nullable=False, default=dict)
+
