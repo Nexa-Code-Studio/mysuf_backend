@@ -373,6 +373,7 @@ class TransactionRepository:
                 selectinload(FuelTransaction.gas_station),
                 selectinload(FuelTransaction.fuel_type),
                 selectinload(FuelTransaction.payment_transactions),
+                selectinload(FuelTransaction.wallet_transaction),
             )
             .filter(FuelTransaction.buyer_profile_id == buyer_profile_id)
             .order_by(FuelTransaction.created_at.desc(), FuelTransaction.id.desc())

@@ -323,25 +323,37 @@ class TransactionService:
         return payment_tx
 
     async def get_wallet_transactions(
-        self, user_id: UUID, page: int, size: int
+        self, user_id: UUID, page: int, size: int, filter_type: str = "all"
     ) -> dict:
         wallet = await self.wallet_service.get_or_create_user_wallet(user_id)
         buyer_profile = await self.user_repo.get_buyer_profile_by_user_id(user_id)
 
-        wallet_transactions = await self.repo.get_wallet_transactions_for_wallet(wallet.id)
-        fuel_transactions = (
-            await self.repo.get_fuel_transactions_for_buyer_profile(buyer_profile.id)
-            if buyer_profile else []
-        )
+        items = []
 
-        items = [
-            self._serialize_wallet_transaction(item)
-            for item in wallet_transactions
-        ]
-        items.extend(
-            self._serialize_fuel_transaction_for_history(item, wallet.id)
-            for item in fuel_transactions
-        )
+        if filter_type in ("all", "wallet"):
+            wallet_transactions = await self.repo.get_wallet_transactions_for_wallet(wallet.id)
+            items.extend(
+                self._serialize_wallet_transaction(item)
+                for item in wallet_transactions
+            )
+
+        if filter_type in ("all", "fuel"):
+            fuel_transactions = (
+                await self.repo.get_fuel_transactions_for_buyer_profile(buyer_profile.id)
+                if buyer_profile else []
+            )
+            if filter_type == "all":
+                items.extend(
+                    self._serialize_fuel_transaction_for_history(item, wallet.id)
+                    for item in fuel_transactions
+                    if item.wallet_transaction_id is None
+                )
+            else:
+                items.extend(
+                    self._serialize_fuel_transaction_for_history(item, wallet.id)
+                    for item in fuel_transactions
+                )
+
         items.sort(key=lambda item: (item["created_at"], str(item["id"])), reverse=True)
 
         total = len(items)
@@ -595,14 +607,20 @@ class TransactionService:
             FuelTransactionStatus.FAILED: WalletTransactionStatus.FAILED,
         }
 
+        balance_before = Decimal("0")
+        balance_after = Decimal("0")
+        if fuel_tx.wallet_transaction:
+            balance_before = fuel_tx.wallet_transaction.balance_before
+            balance_after = fuel_tx.wallet_transaction.balance_after
+
         return {
             "id": fuel_tx.id,
             "wallet_id": wallet_id,
             "type": TransactionType.FUEL_PURCHASE,
             "transaction_flow": TransactionFlow.OUT,
             "amount": fuel_tx.total_amount,
-            "balance_before": Decimal("0"),
-            "balance_after": Decimal("0"),
+            "balance_before": balance_before,
+            "balance_after": balance_after,
             "counterparty_wallet_id": None,
             "payment_transaction_id": payment_transaction.id if payment_transaction else None,
             "payment_method": fuel_tx.payment_method,

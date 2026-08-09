@@ -1,6 +1,6 @@
 from typing import Any
 from uuid import UUID
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_roles
@@ -82,6 +82,7 @@ async def get_topup_status(
 async def get_wallet_transactions(
     page: int = 1,
     size: int = 10,
+    filter_type: str = Query("all", description="Filter type: all, fuel, wallet"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
@@ -89,7 +90,7 @@ async def get_wallet_transactions(
     Get paginated wallet transactions for the authenticated user.
     """
     service = TransactionService(db)
-    return await service.get_wallet_transactions(current_user.id, page, size)
+    return await service.get_wallet_transactions(current_user.id, page, size, filter_type)
 
 
 @router.get("/transactions/{id}", response_model=WalletTransactionResponse)
