@@ -41,9 +41,9 @@ async def test_get_nearby_gas_stations_returns_sorted_items_with_limit():
         verification_status=VerificationStatus.VERIFIED,
         risk_score=Decimal("10.00"),
     )
-    station_near = GasStation(name=f"SPBU Near {uuid4().hex[:6]}", latitude=-6.2000, longitude=106.8000)
-    station_mid = GasStation(name=f"SPBU Mid {uuid4().hex[:6]}", latitude=-6.2500, longitude=106.8500)
-    station_far = GasStation(name=f"SPBU Far {uuid4().hex[:6]}", latitude=-7.2000, longitude=107.8000)
+    station_near = GasStation(name=f"SPBU Near {uuid4().hex[:6]}", latitude=-10.0000, longitude=110.0000)
+    station_mid = GasStation(name=f"SPBU Mid {uuid4().hex[:6]}", latitude=-10.0500, longitude=110.0500)
+    station_far = GasStation(name=f"SPBU Far {uuid4().hex[:6]}", latitude=-11.0000, longitude=111.0000)
 
     ids: dict[str, object] = {}
 
@@ -71,7 +71,7 @@ async def test_get_nearby_gas_stations_returns_sorted_items_with_limit():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/users/me/nearby-gas-stations",
-                params={"latitude": -6.2001, "longitude": 106.8001, "limit": 2},
+                params={"latitude": -10.0001, "longitude": 110.0001, "limit": 2},
                 headers={"Authorization": f"Bearer {token}"},
             )
 

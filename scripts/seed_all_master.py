@@ -15,6 +15,7 @@ from app.modules.gas_stations.seed_data import seed_gas_stations
 from app.modules.fuels.seed_data import seed_fuel_types
 from app.modules.subsidies.seed_data import seed_subsidy_policies, seed_subsidy_quotas
 from app.modules.users.seed_data import seed_users, seed_buyer_user
+from app.modules.companies.seed_data import seed_company_admins
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ async def main(month: int | None = None, year: int | None = None) -> None:
         )
 
         # 5. Non-BUYER System Users (SA, AC, AGS, SO)
-        logger.info("5/7 Seeding Non-BUYER System Users...")
+        logger.info("5/8 Seeding Non-BUYER System Users...")
         user_summary = await seed_users(session)
         logger.info(
             "   [OK] Created: %s, Existing: %s",
@@ -84,8 +85,19 @@ async def main(month: int | None = None, year: int | None = None) -> None:
             user_summary["existing"]
         )
 
-        # 6. Verified Buyer Users
-        logger.info("6/7 Seeding Verified BUYER Users...")
+        # 6. Company Admin Users
+        logger.info("6/8 Seeding Company Admin Users...")
+        company_admin_summary = await seed_company_admins(session)
+        logger.info(
+            "   [OK] Companies created: %s, existing: %s | Admins created: %s, existing: %s",
+            company_admin_summary["companies_created"],
+            company_admin_summary["companies_existing"],
+            company_admin_summary["admins_created"],
+            company_admin_summary["admins_existing"],
+        )
+
+        # 7. Verified Buyer Users
+        logger.info("7/8 Seeding Verified BUYER Users...")
         buyer_summary = await seed_buyer_user(session)
         logger.info(
             "   [OK] Created: %s, Repaired: %s, Existing: %s, Skipped: %s",
@@ -95,8 +107,8 @@ async def main(month: int | None = None, year: int | None = None) -> None:
             buyer_summary["skipped"],
         )
 
-        # 7. Subsidy Quotas
-        logger.info("7/7 Seeding Subsidy Quotas...")
+        # 8. Subsidy Quotas
+        logger.info("8/8 Seeding Subsidy Quotas...")
         quota_summary = await seed_subsidy_quotas(session, month=month, year=year)
         logger.info(
             "   [OK] Created: %s, Existing: %s, Processed: %s, Period: %s/%s",

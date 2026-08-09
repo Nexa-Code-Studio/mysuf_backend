@@ -22,6 +22,17 @@ class ImageUtils:
         return image
 
     @staticmethod
+    def load_cv2_image_from_bytes(content: bytes) -> Any:
+        cv2 = importlib.import_module("cv2")
+        numpy = importlib.import_module("numpy")
+
+        image_bytes = numpy.frombuffer(content, dtype=numpy.uint8)
+        image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("Could not decode image from bytes")
+        return image
+
+    @staticmethod
     def perspective_correct_ktp(image: Any) -> Any:
         cv2 = importlib.import_module("cv2")
         numpy = importlib.import_module("numpy")

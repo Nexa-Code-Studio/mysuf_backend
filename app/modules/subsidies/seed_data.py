@@ -121,6 +121,8 @@ async def seed_subsidy_quotas(
     session: AsyncSession,
     month: int | None = None,
     year: int | None = None,
+    buyer_profile_ids: list | None = None,
+    vehicle_ownership_ids: list | None = None,
 ) -> dict[str, object]:
     current_time = datetime.utcnow()
     target_month = month or current_time.month
@@ -131,21 +133,20 @@ async def seed_subsidy_quotas(
 
     from app.modules.users.models import BuyerProfile
     from app.modules.subsidies.service import SubsidyService
+    from app.modules.vehicles.models import VehicleOwnership, VehicleQuotaMode
 
-    buyer_profiles = list(
-        (
-            await session.execute(
-                select(BuyerProfile).order_by(BuyerProfile.timestamp, BuyerProfile.id)
-            )
-        ).scalars().all()
-    )
-    
-    summary = {
+    bp_query = select(BuyerProfile).order_by(BuyerProfile.timestamp, BuyerProfile.id)
+    if buyer_profile_ids is not None:
+        bp_query = bp_query.where(BuyerProfile.id.in_(buyer_profile_ids))
+    buyer_profiles = list((await session.execute(bp_query)).scalars().all())
+
+    summary: dict[str, object] = {
         "created": 0,
         "existing": 0,
         "processed": 0,
         "month": target_month,
         "year": target_year,
+        "usage_types": {},
     }
 
     from app.modules.subsidies.models import EligibilityStatus
@@ -159,6 +160,10 @@ async def seed_subsidy_quotas(
     )
 
     subsidy_service = SubsidyService(session)
+
+    # -------------------------------------------------------------------
+    # Process PERSONAL quotas for each BuyerProfile
+    # -------------------------------------------------------------------
     for profile in buyer_profiles:
         # Check if KKSubsidyEligibility already exists for this KK and the personal policy
         if personal_policy:
@@ -189,11 +194,65 @@ async def seed_subsidy_quotas(
                 SubsidyQuota.year == target_year,
             )
         )
-        
+
         await subsidy_service.get_or_sync_personal_quota(profile, target_month, target_year)
-        
+
         if existing_quota is None:
             summary["created"] += 1
+            usage_types = summary["usage_types"]
+            usage_types["PERSONAL"] = usage_types.get("PERSONAL", 0) + 1
+        else:
+            summary["existing"] += 1
+
+        summary["processed"] += 1
+
+    # -------------------------------------------------------------------
+    # Process VEHICLE-level quotas (OJOL, UMKM, Truck, etc.)
+    # -------------------------------------------------------------------
+    ded_query = select(VehicleOwnership).where(
+        VehicleOwnership.quota_mode == VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA
+    )
+    if vehicle_ownership_ids is not None:
+        ded_query = ded_query.where(VehicleOwnership.id.in_(vehicle_ownership_ids))
+    dedicated_ownerships = list((await session.execute(ded_query)).scalars().all())
+
+
+    for ownership in dedicated_ownerships:
+        # Find the policy for this usage type
+        policy = await session.scalar(
+            select(SubsidyPolicy).where(
+                SubsidyPolicy.usage_type == ownership.usage_type,
+                SubsidyPolicy.is_active.is_(True),
+            )
+        )
+        if policy is None:
+            continue
+
+        existing_quota = await session.scalar(
+            select(SubsidyQuota.id).where(
+                SubsidyQuota.owner_type == SubsidyOwnerType.VEHICLE,
+                SubsidyQuota.owner_id == ownership.vehicle_id,
+                SubsidyQuota.month == target_month,
+                SubsidyQuota.year == target_year,
+            )
+        )
+
+        if existing_quota is None:
+            new_quota = SubsidyQuota(
+                owner_type=SubsidyOwnerType.VEHICLE,
+                owner_id=ownership.vehicle_id,
+                month=target_month,
+                year=target_year,
+                quota_liters=policy.monthly_quota_liters,
+                used_liters=0,
+                is_active=True,
+            )
+            session.add(new_quota)
+            await session.flush()
+            summary["created"] += 1
+            usage_types = summary["usage_types"]
+            usage_type_key = ownership.usage_type.value if hasattr(ownership.usage_type, "value") else str(ownership.usage_type)
+            usage_types[usage_type_key] = usage_types.get(usage_type_key, 0) + 1
         else:
             summary["existing"] += 1
 

@@ -16,7 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     postgresql-client \
     git \
+    libgl1 \
+    libglib2.0-0 \
+    && ldconfig \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Add a build argument to control installation of identity packages
 ARG INSTALL_IDENTITY=true
@@ -36,8 +40,9 @@ RUN if [ "$INSTALL_IDENTITY" = "true" ] ; then \
       apt-get update && apt-get install -y --no-install-recommends \
       g++ \
       python3-dev \
-      libgl1-mesa-glx \
+      libgl1 \
       libglib2.0-0 \
+      && ldconfig \
       && rm -rf /var/lib/apt/lists/* \
       && pip install --no-cache-dir -e ".[identity]" ; \
     fi

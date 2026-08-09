@@ -153,6 +153,7 @@ class FuelTransaction(Base):
     plate_number_snapshot = Column(String, nullable=False)
     nik_snapshot = Column(String, nullable=True)
     company_name_snapshot = Column(String, nullable=True)
+    vehicle_nfc_id_snapshot = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

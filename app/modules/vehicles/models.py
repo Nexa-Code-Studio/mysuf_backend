@@ -69,6 +69,7 @@ class VehicleOwnership(Base):
     plate_number_snapshot = Column(String, nullable=False)
     # Scanner resolves the current operational owner from this NFC snapshot.
     ktp_nfc_id_snapshot = Column(String, nullable=False, index=True)
+    vehicle_nfc_id = Column(String, nullable=True, index=True)
 
     assigned_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True) # Added based on user request
 

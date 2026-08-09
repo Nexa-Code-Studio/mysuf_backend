@@ -38,7 +38,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.core.activity_middleware import ActivityLoggingMiddleware
+app.add_middleware(ActivityLoggingMiddleware)
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
 
 @app.get("/health")
 def health_check():

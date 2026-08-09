@@ -35,6 +35,7 @@ class CitizenRegistryMockup(Base):
     
     pekerjaan = Column(String, nullable=True)
     penghasilan = Column(Numeric(18, 2), nullable=True)
+    foto_ktp = Column(String, nullable=True)
 
     # Relationships
     kk = relationship("KK")
@@ -66,6 +67,7 @@ class VehicleRegistryMockup(Base):
     owner_name = Column(String, nullable=True)
     owner_nik = Column(String, nullable=True)
     jenis = Column(Enum(VehicleClass, name="vehicle_class_enum"), nullable=True)
+    vehicle_nfc_id = Column(String, nullable=True, unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

@@ -45,7 +45,7 @@ async def test_registries_crud_flow():
             assert res.status_code == 400
 
             # List KKs
-            res = await ac.get("/api/v1/registries/kk")
+            res = await ac.get("/api/v1/registries/kk?page_size=100")
             assert res.status_code == 200
             list_data = res.json()
             assert "items" in list_data

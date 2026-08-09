@@ -1,10 +1,32 @@
+import os
+import pathlib
 from collections.abc import Sequence
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.modules.registries.models import CitizenRegistryMockup, KK
+from app.modules.registries.models import CitizenRegistryMockup, KK, VehicleRegistryMockup
+from app.core.storage import StorageService
+
+# Gunakan gambar orang dari utils/ sebagai placeholder foto KTP saat seeding
+# parents[3] dari seed_data.py = mysuf_backend/
+_UTILS_DIR = pathlib.Path(__file__).resolve().parents[3] / "utils"
+_KTP_PLACEHOLDER_PATH = _UTILS_DIR / "gambar-orang-png-0.webp"
+_KTP_PLACEHOLDER_CONTENT_TYPE = "image/webp"
+
+def _load_ktp_placeholder() -> bytes:
+    """Muat file placeholder KTP dari disk. Fallback ke bytes kosong jika tidak ditemukan."""
+    try:
+        return _KTP_PLACEHOLDER_PATH.read_bytes()
+    except OSError:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"KTP placeholder file tidak ditemukan di {_KTP_PLACEHOLDER_PATH}. "
+            "Seeding akan lanjut tanpa foto KTP."
+        )
+        return b""
+
 
 
 DEFAULT_REGISTRY_SEED_DATA = {
@@ -36,10 +58,11 @@ async def seed_registry_mockups(
     seed_data: dict[str, Sequence[dict]] | None = None,
 ) -> dict[str, int]:
     dataset = seed_data or DEFAULT_REGISTRY_SEED_DATA
-    summary = {"kk": 0, "citizens": 0}
+    summary = {"kk": 0, "citizens": 0, "vehicles": 0}
 
     kk_by_code = await _seed_kk(session, dataset.get("kk", ()), summary)
     await _seed_citizens(session, dataset.get("citizens", ()), kk_by_code, summary)
+    await _seed_vehicles(session, dataset.get("vehicles", ()), summary)
 
     await session.commit()
     return summary
@@ -69,6 +92,7 @@ async def _seed_citizens(
     kk_by_code: dict[str, KK],
     summary: dict[str, int],
 ) -> None:
+    storage = StorageService()
     for item in citizen_items:
         kk = kk_by_code.get(item["kk_code"])
         if kk is None:
@@ -88,3 +112,46 @@ async def _seed_citizens(
         citizen.kk_id = kk.id
         citizen.pekerjaan = item.get("pekerjaan")
         citizen.penghasilan = item.get("penghasilan")
+        
+        foto_ktp_key = f"citizen_ktp/{citizen.nik}.webp"
+        citizen.foto_ktp = foto_ktp_key
+
+        ktp_bytes = _load_ktp_placeholder()
+        if ktp_bytes:
+            try:
+                storage.save_file(foto_ktp_key, ktp_bytes, _KTP_PLACEHOLDER_CONTENT_TYPE)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to seed MinIO image for citizen {citizen.nik}: {e}")
+
+
+
+async def _seed_vehicles(
+    session: AsyncSession,
+    vehicle_items: Sequence[dict],
+    summary: dict[str, int],
+) -> None:
+    for item in vehicle_items:
+        result = await session.execute(
+            select(VehicleRegistryMockup).filter(
+                VehicleRegistryMockup.registration_number == item["registration_number"]
+            )
+        )
+        vehicle = result.scalars().first()
+        if vehicle is None:
+            vehicle = VehicleRegistryMockup(
+                plate_number=item["plate_number"],
+                registration_number=item["registration_number"],
+                brand=item["brand"],
+                vehicle_type=item["vehicle_type"],
+                manufacture_year=item["manufacture_year"],
+                color=item["color"],
+                engine_capacity_cc=item["engine_capacity_cc"],
+                pkb=item["pkb"],
+                njkb=item["njkb"],
+                owner_name=item["owner_name"],
+                owner_nik=item["owner_nik"],
+            )
+            session.add(vehicle)
+            summary["vehicles"] += 1
+            await session.flush()

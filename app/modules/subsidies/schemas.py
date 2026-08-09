@@ -43,12 +43,13 @@ class SubsidyPolicyListResponse(BaseModel):
 
 class KKEligibilityItem(BaseModel):
     id: UUID
-    kk_id: UUID
-    code: str
-    vehicle_count: int
-    total_njkb: Decimal
+    nik: str
+    nama: str
+    pekerjaan: str
+    penghasilan: Decimal
     threshold: Decimal
     eligible: str
+
 
 
 class KKEligibilityListResponse(BaseModel):

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     MIN_TOPUP_AMOUNT: float = 10000.00
     QRIS_SECRET_KEY: str = "YTAU!@*@!^18728yLAHD{:{{"
 
+    # MinIO Settings
+    MINIO_ENDPOINT: str
+    MINIO_ACCESS_KEY: str
+    MINIO_SECRET_KEY: str
+    MINIO_BUCKET_NAME: str = "mysuf"
+    MINIO_SECURE: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 settings = Settings()

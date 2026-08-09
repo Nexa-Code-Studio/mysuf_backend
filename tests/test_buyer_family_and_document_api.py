@@ -195,13 +195,13 @@ async def test_buyer_family_overview_pending_list_and_document_streams():
             session.add(request_doc)
             await session.commit()
 
-            shared_vehicle_storage_dir = VehicleService.STORAGE_ROOT / str(ownership_a.id)
-            shared_vehicle_storage_dir.mkdir(parents=True, exist_ok=True)
-            (shared_vehicle_storage_dir / "stnk-photo.jpg").write_bytes(b"final-doc-bytes")
+            from app.core.storage import StorageService
+            storage = StorageService()
+            storage.save_file(final_doc.storage_key, b"final-doc-bytes", final_doc.mime_type)
+            storage.save_file(request_doc.storage_key, b"pending-doc-bytes", request_doc.mime_type)
 
+            shared_vehicle_storage_dir = VehicleService.STORAGE_ROOT / str(ownership_a.id)
             request_storage_dir = VehicleService.REQUEST_STORAGE_ROOT / str(pending_request.id)
-            request_storage_dir.mkdir(parents=True, exist_ok=True)
-            (request_storage_dir / "productive-business-proof.pdf").write_bytes(b"pending-doc-bytes")
 
             ids = {
                 "kk_id": kk.id,

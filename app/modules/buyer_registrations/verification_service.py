@@ -23,6 +23,7 @@ from app.modules.buyer_registrations.quality_service import QualityService
 from app.modules.buyer_registrations.repository import BuyerRegistrationRepository
 from app.modules.registries.models import CitizenRegistryMockup
 from app.modules.users.models import BuyerProfile, User, UserRole, VerificationStatus
+from app.core.storage import StorageService
 
 
 @dataclass
@@ -38,7 +39,7 @@ class VerificationService:
         self.quality_service = QualityService()
         self.ocr_service = OCRService(get_model_store())
         self.face_service = FaceService(get_model_store())
-        self.storage_root = Path(__file__).resolve().parents[3] / "storage" / "buyer-registrations"
+        self.storage = StorageService()
 
     async def process_attempt(self, attempt_id: str) -> None:
         attempt = await self.repo.get_attempt_by_id(attempt_id)
@@ -62,13 +63,16 @@ class VerificationService:
         if not ktp_document or not selfie_document:
             raise VerificationFailure("VERIFICATION_INTERNAL_ERROR", "Registration documents are incomplete.")
 
+        ktp_bytes, _ = self.storage.get_file(ktp_document.storage_key)
+        selfie_bytes, _ = self.storage.get_file(selfie_document.storage_key)
+
         ktp_image = await asyncio.to_thread(
-            ImageUtils.load_cv2_image,
-            self.storage_root / ktp_document.storage_key,
+            ImageUtils.load_cv2_image_from_bytes,
+            ktp_bytes,
         )
         selfie_image = await asyncio.to_thread(
-            ImageUtils.load_cv2_image,
-            self.storage_root / selfie_document.storage_key,
+            ImageUtils.load_cv2_image_from_bytes,
+            selfie_bytes,
         )
 
         ktp_quality = await asyncio.to_thread(self.quality_service.check_ktp_image, ktp_image)
@@ -87,12 +91,16 @@ class VerificationService:
 
         ktp_rectified = await asyncio.to_thread(ImageUtils.perspective_correct_ktp, ktp_image)
         
+        ocr_result = await asyncio.to_thread(self.ocr_service.extract_nik, ktp_rectified)
+        attempt.nik_ocr = ocr_result.nik
+        attempt.is_nik_match = (ocr_result.nik == attempt.nik_input)
+
+        if not attempt.is_nik_match:
+            raise VerificationFailure("NIK_OCR_MISMATCH", "NIK on KTP does not match the inputted NIK.")
+
         citizen = await self.repo.get_citizen_by_nik(attempt.nik_input)
         if not citizen:
             raise VerificationFailure("NIK_NOT_FOUND", "NIK was not found in citizen registry mockup.")
-
-        attempt.nik_ocr = attempt.nik_input
-        attempt.is_nik_match = True
 
         # Log OCR Results (Bypassed but showing Frontend ML Kit data) directly to the backend terminal
         print("\n" + "=" * 60)

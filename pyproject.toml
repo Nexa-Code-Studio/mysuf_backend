@@ -20,6 +20,8 @@ dependencies = [
     "httpx>=0.26.0",
     "firebase-admin>=6.5.0",
     "uuid7>=0.1.0",
+    "minio>=7.2.7",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.optional-dependencies]

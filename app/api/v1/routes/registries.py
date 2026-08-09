@@ -1,5 +1,5 @@
 from typing import Any
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -12,6 +12,10 @@ from app.modules.registries.schemas import (
     KKListResponse,
     KKResponse,
     KKUpdate,
+    VehicleCreate,
+    VehicleListResponse,
+    VehicleResponse,
+    VehicleUpdate,
 )
 from app.modules.registries.service import RegistryService
 
@@ -147,4 +151,102 @@ async def delete_citizen(
     """
     service = RegistryService(db)
     await service.delete_citizen(citizen_id)
+
+
+@router.get("/citizens/{citizen_id}/foto-ktp")
+async def get_citizen_foto_ktp(
+    citizen_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Retrieve the citizen's KTP photo from MinIO storage and stream it.
+    """
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.core.storage import StorageService
+    
+    service = RegistryService(db)
+    citizen = await service.get_citizen(citizen_id)
+    if not citizen or not citizen.foto_ktp:
+        raise HTTPException(status_code=404, detail="KTP photo not found for this citizen.")
+        
+    storage = StorageService()
+    try:
+        content, content_type = storage.get_file(citizen.foto_ktp)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Stored KTP photo file not found in storage.")
+        
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=content_type or "image/jpeg",
+        headers={
+            "Content-Disposition": f'inline; filename="{citizen.nik}.jpg"'
+        }
+    )
+
+
+# ====================================================
+# Vehicle Registry Mockup Endpoints
+# ====================================================
+
+@router.get("/vehicles", response_model=VehicleListResponse)
+async def read_vehicles(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Retrieve vehicle registry mockup entries with pagination.
+    """
+    service = RegistryService(db)
+    return await service.get_vehicles(page=page, page_size=page_size)
+
+
+@router.get("/vehicles/{vehicle_id}", response_model=VehicleResponse)
+async def read_vehicle(
+    vehicle_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Retrieve a specific vehicle registry mockup entry by its UUID.
+    """
+    service = RegistryService(db)
+    return await service.get_vehicle(vehicle_id)
+
+
+@router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
+async def create_vehicle(
+    vehicle_in: VehicleCreate,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Create a new vehicle registry mockup entry.
+    """
+    service = RegistryService(db)
+    return await service.create_vehicle(vehicle_in)
+
+
+@router.put("/vehicles/{vehicle_id}", response_model=VehicleResponse)
+async def update_vehicle(
+    vehicle_id: str,
+    vehicle_in: VehicleUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Update a vehicle registry mockup entry.
+    """
+    service = RegistryService(db)
+    return await service.update_vehicle(vehicle_id, vehicle_in)
+
+
+@router.delete("/vehicles/{vehicle_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_vehicle(
+    vehicle_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """
+    Delete a vehicle registry mockup entry.
+    """
+    service = RegistryService(db)
+    await service.delete_vehicle(vehicle_id)
 

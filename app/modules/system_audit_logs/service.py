@@ -84,13 +84,6 @@ class SystemAuditLogService:
         size: int = 100,
         search: str | None = None
     ) -> tuple[list[SystemAuditLog], int]:
-        # Check if table is empty
-        check_stmt = select(func.count(SystemAuditLog.id))
-        count_existing = (await self.db.execute(check_stmt)).scalar() or 0
-
-        if count_existing == 0:
-            await self.seed_default_logs()
-
         # Build main query
         stmt = select(SystemAuditLog)
 
@@ -116,24 +109,3 @@ class SystemAuditLogService:
 
         return list(items), total
 
-    async def seed_default_logs(self) -> None:
-        now = datetime.utcnow()
-        mock_data = [
-            ("Rama Utama", "Super Admin", "Approve perusahaan: PT Logistik Nusantara Maju", "103.24.118.12", now - timedelta(minutes=5)),
-            ("Sari Widodo", "Admin Pemerintah", "Update bobot kelayakan: NJKB 40%", "180.252.91.44", now - timedelta(minutes=17)),
-            ("Rama Utama", "Super Admin", "Reject warga komersial: KTP 3174012345678901", "103.24.118.12", now - timedelta(hours=10, minutes=30)),
-            ("Dewi Kusuma", "Admin Perusahaan", "Reset MFA akun perusahaan", "36.85.101.77", now - timedelta(hours=13, minutes=5)),
-            ("Rama Utama", "Super Admin", "Tambah user baru: Admin SPBU Bandung", "103.24.118.12", now - timedelta(hours=13, minutes=45)),
-        ]
-
-        for name, role, action, ip, created_at in mock_data:
-            log_entry = SystemAuditLog(
-                actor_id=None,
-                actor_name_snapshot=name,
-                actor_role_snapshot=role,
-                action=action,
-                ip_address=ip,
-                created_at=created_at
-            )
-            self.db.add(log_entry)
-        await self.db.commit()
