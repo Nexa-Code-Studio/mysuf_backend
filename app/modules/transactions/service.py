@@ -405,9 +405,24 @@ class TransactionService:
                 search=q,
             )
 
+        citizen_by_nik = {}
+        niks = {
+            item.buyer_profile.nik_snapshot if item.buyer_profile else item.nik_snapshot
+            for item in items
+            if (item.buyer_profile and item.buyer_profile.nik_snapshot) or item.nik_snapshot
+        }
+        if niks:
+            from sqlalchemy.future import select
+            from app.modules.registries.models import CitizenRegistryMockup
+            result = await self.db.execute(
+                select(CitizenRegistryMockup).filter(CitizenRegistryMockup.nik.in_(niks))
+            )
+            citizens = result.scalars().all()
+            citizen_by_nik = {c.nik: c for c in citizens}
+
         return {
             "summary": summary,
-            "items": [self._serialize_cashier_transaction_item(item, current_user.name) for item in items],
+            "items": [self._serialize_cashier_transaction_item(item, current_user.name, citizen_by_nik) for item in items],
             "next_cursor": next_cursor,
             "has_more": has_more,
         }
@@ -819,6 +834,14 @@ class TransactionService:
         from sqlalchemy import select
         from datetime import datetime
 
+        if vehicle_ownership is None:
+            return {
+                "detected_frauds": [],
+                "risk_score": 0,
+                "risk_level": "SAFE",
+                "action": "ALLOW TRANSACTION"
+            }
+
         detected_frauds = []
         risk_score = 0
 
@@ -1127,7 +1150,7 @@ class TransactionService:
             return nik
         return f"{nik[:4]}****{nik[-4:]}"
 
-    def _serialize_cashier_transaction_item(self, fuel_tx: Any, cashier_name: str | None) -> dict:
+    def _serialize_cashier_transaction_item(self, fuel_tx: Any, cashier_name: str | None, citizen_by_nik: dict = None) -> dict:
         buyer_name = None
         buyer_nik = None
         if fuel_tx.buyer_profile and fuel_tx.buyer_profile.user:
@@ -1137,6 +1160,12 @@ class TransactionService:
             buyer_name = fuel_tx.company_name_snapshot
             buyer_nik = fuel_tx.nik_snapshot
 
+        buyer_foto_ktp_url = None
+        if citizen_by_nik and buyer_nik in citizen_by_nik:
+            citizen = citizen_by_nik[buyer_nik]
+            if citizen.foto_ktp:
+                buyer_foto_ktp_url = f"/api/v1/registries/citizens/{citizen.id}/foto-ktp"
+
         return {
             "id": fuel_tx.id,
             "created_at": fuel_tx.created_at,
@@ -1145,6 +1174,7 @@ class TransactionService:
             "plate_number_snapshot": fuel_tx.plate_number_snapshot,
             "nik_snapshot": fuel_tx.nik_snapshot,
             "buyer_name": buyer_name,
+            "buyer_foto_ktp_url": buyer_foto_ktp_url,
             "fuel_name": fuel_tx.fuel_type.name if fuel_tx.fuel_type else "Bahan Bakar",
             "liters": float(fuel_tx.liters),
             "total_amount": float(fuel_tx.total_amount),
@@ -1291,11 +1321,6 @@ class TransactionService:
             ),
         )
         vehicle_ownership = res_vehicle.scalars().first()
-        if not vehicle_ownership:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Kepemilikan kendaraan dengan nomor plat tersebut tidak ditemukan pada profil pembeli.",
-            )
 
         res_fuel = await self.db.execute(
             select(FuelType).filter(FuelType.id == request.fuel_type_id),
@@ -1346,7 +1371,7 @@ class TransactionService:
             month = now.month
             year = now.year
 
-            if vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
+            if vehicle_ownership is None or vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
                 policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
                 if policy:
                     latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
@@ -1355,12 +1380,19 @@ class TransactionService:
                     )
                     if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
                         kk_eligibility_id = latest_eligibility.id
-                        subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
-                            vehicle_ownership=vehicle_ownership,
-                            month=month,
-                            year=year,
-                            kk_subsidy_eligibility_id=kk_eligibility_id,
-                        )
+                        if vehicle_ownership is None:
+                            subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
+                                buyer_profile=buyer_profile,
+                                month=month,
+                                year=year,
+                            )
+                        else:
+                            subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                                vehicle_ownership=vehicle_ownership,
+                                month=month,
+                                year=year,
+                                kk_subsidy_eligibility_id=kk_eligibility_id,
+                            )
             else:
                 policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
                 if policy:
@@ -1608,7 +1640,7 @@ class TransactionService:
         fuel_tx = FuelTransaction(
             buyer_type=BuyerType.PERSONAL,
             buyer_profile_id=buyer_profile.id,
-            vehicle_ownership_id=vehicle_ownership.id,
+            vehicle_ownership_id=vehicle_ownership.id if vehicle_ownership else None,
             gas_station_id=current_station.id,
             fuel_type_id=fuel_type.id,
             liters=request.liters,
@@ -1798,7 +1830,7 @@ class TransactionService:
         fuel_tx = FuelTransaction(
             buyer_type=BuyerType.PERSONAL,
             buyer_profile_id=buyer_profile.id,
-            vehicle_ownership_id=vehicle_ownership.id,
+            vehicle_ownership_id=vehicle_ownership.id if vehicle_ownership else None,
             gas_station_id=current_station.id,
             fuel_type_id=fuel_type.id,
             liters=request.liters,
@@ -2291,9 +2323,10 @@ class TransactionService:
         from sqlalchemy import select, func, or_, and_, cast, String
         from sqlalchemy.orm import selectinload
         from app.modules.transactions.models import FuelTransaction, FuelTransactionStatus
-        from app.modules.users.models import UserRole, User
+        from app.modules.users.models import UserRole, User, BuyerProfile
         from app.modules.gas_stations.models import GasStation
         from app.modules.fuels.models import FuelType
+
 
         # 1. Determine target gas station ID
         target_station_id = gas_station_id
@@ -2330,10 +2363,13 @@ class TransactionService:
             select(FuelTransaction)
             .options(
                 selectinload(FuelTransaction.fuel_type),
-                selectinload(FuelTransaction.verified_by)
+                selectinload(FuelTransaction.verified_by),
+                selectinload(FuelTransaction.buyer_profile).selectinload(BuyerProfile.user),
             )
             .filter(FuelTransaction.gas_station_id == target_station_id)
         )
+
+
 
         # 3. Apply Filters
         # Fuel Type filter
@@ -2421,16 +2457,32 @@ class TransactionService:
         for tx in transactions:
             fuel_name = tx.fuel_type.name if tx.fuel_type else "BBM"
             cashier_name = tx.verified_by.name if tx.verified_by else "System/Cashier"
-            
+
             status_label = "Success"
             if tx.transaction_status == FuelTransactionStatus.PENDING:
                 status_label = "Review"
             elif tx.transaction_status in [FuelTransactionStatus.CANCELLED, FuelTransactionStatus.FAILED]:
                 status_label = "Rejected"
 
+            # Resolve buyer name: personal buyer from profile, or company snapshot
+            buyer_name = None
+            if hasattr(tx, 'buyer_profile') and tx.buyer_profile and tx.buyer_profile.user:
+                buyer_name = tx.buyer_profile.user.name
+            elif getattr(tx, 'company_name_snapshot', None):
+                buyer_name = tx.company_name_snapshot
+
+            # Mask NIK: show only last 4 digits
+            nik_raw = getattr(tx, 'nik_snapshot', None)
+            nik_masked = None
+            if nik_raw:
+                nik_masked = f"****{nik_raw[-4:]}" if len(nik_raw) >= 4 else nik_raw
+
             serialized_items.append({
                 "id": str(tx.id),
                 "plate": tx.plate_number_snapshot,
+                "buyer_name": buyer_name,
+                "nik_masked": nik_masked,
+                "buyer_type": tx.buyer_type.value if tx.buyer_type else None,
                 "fuel": fuel_name,
                 "volume": float(tx.liters),
                 "price": float(tx.total_amount),
@@ -2439,6 +2491,7 @@ class TransactionService:
                 "status": status_label,
                 "cashier": cashier_name
             })
+
 
         pages = (total + size - 1) // size if total else 0
 

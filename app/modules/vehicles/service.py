@@ -6,9 +6,11 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
+import io
 from fastapi import HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.storage import StorageService
 
 from app.modules.registries.models import CitizenRegistryMockup
 from app.modules.subsidies.models import EligibilityStatus, KKSubsidyEligibility, SubsidyOwnerType
@@ -40,6 +42,7 @@ class VehicleService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = VehicleRepository(db)
+        self.storage = StorageService()
         self.transaction_service = TransactionService(db)
 
     async def get_vehicle_ownerships(self, page: int = 1, page_size: int = 20) -> dict:
@@ -121,18 +124,186 @@ class VehicleService:
 
         return {"items": items}
 
+    async def validate_cross_nfc_uniqueness(self, nfc_id: str, exclude_ownership_id: UUID | None = None) -> None:
+        from sqlalchemy import select
+        from app.modules.registries.models import CitizenRegistryMockup, VehicleRegistryMockup
+        from app.modules.vehicles.models import VehicleOwnership
+        from app.modules.users.models import BuyerProfile
+
+        # 1. Cek apakah NFC ID sudah dipakai di CitizenRegistryMockup (KTP warga)
+        res_citizen = await self.db.execute(
+            select(CitizenRegistryMockup).filter(CitizenRegistryMockup.ktp_nfc_id == nfc_id)
+        )
+        if res_citizen.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Kode NFC '{nfc_id}' sudah terdaftar sebagai KTP warga di sistem Kependudukan.",
+            )
+
+        # 2. Cek apakah NFC ID sudah dipakai di BuyerProfile
+        res_buyer = await self.db.execute(
+            select(BuyerProfile).filter(BuyerProfile.ktp_nfc_id_snapshot == nfc_id)
+        )
+        if res_buyer.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Kode NFC '{nfc_id}' sudah terdaftar sebagai KTP warga aktif.",
+            )
+
+        # 3. Cek apakah NFC ID sudah dipakai di VehicleRegistryMockup (NFC kendaraan)
+        res_veh_registry = await self.db.execute(
+            select(VehicleRegistryMockup).filter(VehicleRegistryMockup.vehicle_nfc_id == nfc_id)
+        )
+        if res_veh_registry.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Kode NFC '{nfc_id}' sudah terdaftar sebagai NFC kendaraan di database Kepolisian.",
+            )
+
+        # 4. Cek apakah NFC ID sudah dipakai di VehicleOwnership
+        stmt_ownership = select(VehicleOwnership).filter(VehicleOwnership.vehicle_nfc_id == nfc_id)
+        if exclude_ownership_id:
+            stmt_ownership = stmt_ownership.filter(VehicleOwnership.id != exclude_ownership_id)
+        res_ownership = await self.db.execute(stmt_ownership)
+        if res_ownership.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Kode NFC '{nfc_id}' sudah terdaftar pada kendaraan lain.",
+            )
+
     async def get_cashier_buyer_by_nfc(self, current_user: User, nfc_id: str) -> dict:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.modules.vehicles.models import VehicleOwnership
+        from app.modules.users.models import BuyerProfile
+        from app.modules.subsidies.service import SubsidyService
+
         buyer_profile = await self.repo.get_buyer_profile_by_ktp_nfc_id_snapshot(nfc_id)
         lookup_method = CashierScanMethod.NFC
+        current_time = self._utcnow()
+
         if not buyer_profile:
             # Fallback to search by NIK snapshot
-            from app.modules.users.models import BuyerProfile
-            from sqlalchemy import select
-            from sqlalchemy.orm import selectinload
             stmt = select(BuyerProfile).options(selectinload(BuyerProfile.user)).filter(BuyerProfile.nik_snapshot == nfc_id)
             res = await self.db.execute(stmt)
             buyer_profile = res.scalars().first()
-            lookup_method = CashierScanMethod.NIK
+            if buyer_profile:
+                lookup_method = CashierScanMethod.NIK
+
+        # If still not found, check if it's a Commercial Vehicle NFC card
+        if not buyer_profile:
+            stmt_veh = select(VehicleOwnership).filter(VehicleOwnership.vehicle_nfc_id == nfc_id)
+            res_veh = await self.db.execute(stmt_veh)
+            ownership = res_veh.scalars().first()
+            if ownership:
+                if not ownership.assigned_user_id:
+                    await self.transaction_service.log_cashier_scan_event(
+                        cashier_user=current_user,
+                        lookup_method=lookup_method,
+                        lookup_value=nfc_id,
+                        result=CashierScanResult.FAILED,
+                        error_message="Kendaraan komersial ini belum ditugaskan ke pengemudi mana pun.",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Kendaraan komersial ini belum ditugaskan ke pengemudi mana pun.",
+                    )
+
+                # Get the assigned driver's profile with eager load user
+                stmt_bp = select(BuyerProfile).options(selectinload(BuyerProfile.user)).filter(BuyerProfile.user_id == ownership.assigned_user_id)
+                res_bp = await self.db.execute(stmt_bp)
+                buyer_profile = res_bp.scalars().first()
+                if not buyer_profile or buyer_profile.user is None:
+                    await self.transaction_service.log_cashier_scan_event(
+                        cashier_user=current_user,
+                        lookup_method=lookup_method,
+                        lookup_value=nfc_id,
+                        result=CashierScanResult.FAILED,
+                        error_message="Profil pengemudi yang ditugaskan tidak ditemukan.",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Profil pengemudi yang ditugaskan tidak ditemukan.",
+                    )
+
+                # Build commercial vehicle details
+                registry_vehicle = await self.repo.get_vehicle_registry_by_id(ownership.vehicle_id)
+                type_label = ownership.plate_number_snapshot
+                if registry_vehicle is not None:
+                    type_label = f"{registry_vehicle.brand} - {registry_vehicle.vehicle_type}"
+
+                quota_summary = await self._build_vehicle_quota_summary(
+                    ownership=ownership,
+                    buyer_profile=buyer_profile,
+                    month=current_time.month,
+                    year=current_time.year,
+                )
+                is_eligible = quota_summary["quota_liters"] is not None
+
+                vehicles = [
+                    {
+                        "ownership_id": ownership.id,
+                        "vehicle_id": ownership.vehicle_id,
+                        "plate_number": ownership.plate_number_snapshot,
+                        "registration_number": (
+                            registry_vehicle.registration_number if registry_vehicle is not None else None
+                        ),
+                        "type_label": type_label,
+                        "category": self._to_vehicle_category(ownership.usage_type),
+                        "ownership_status": ownership.ownership_status,
+                        "usage_type": ownership.usage_type,
+                        "brand": registry_vehicle.brand if registry_vehicle is not None else None,
+                        "vehicle_type": (
+                            registry_vehicle.vehicle_type if registry_vehicle is not None else None
+                        ),
+                        "color": registry_vehicle.color if registry_vehicle is not None else None,
+                        "manufacture_year": (
+                            registry_vehicle.manufacture_year if registry_vehicle is not None else None
+                        ),
+                        "is_eligible": is_eligible,
+                        "quota_liters": quota_summary["quota_liters"],
+                        "used_liters": quota_summary["used_liters"],
+                        "remaining_liters": quota_summary["remaining_liters"],
+                    }
+                ]
+
+                # Get driver's personal quota
+                subsidy_service = SubsidyService(self.db)
+                personal_quota = await subsidy_service.get_or_sync_personal_quota(
+                    buyer_profile=buyer_profile,
+                    month=current_time.month,
+                    year=current_time.year,
+                )
+                quota_liters = float(Decimal(personal_quota.quota_liters)) if personal_quota else 0.0
+                used_liters = float(Decimal(personal_quota.used_liters)) if personal_quota else 0.0
+                remaining_liters = max(quota_liters - used_liters, 0.0)
+                is_eligible_driver = personal_quota.is_active if personal_quota else False
+
+                response = {
+                    "buyer": {
+                        "buyer_profile_id": buyer_profile.id,
+                        "user_id": buyer_profile.user_id,
+                        "name": buyer_profile.user.name,
+                        "nik_snapshot": buyer_profile.nik_snapshot,
+                        "verification_status": buyer_profile.verification_status.value,
+                        "risk_score": float(Decimal(buyer_profile.risk_score)),
+                        "is_pin_active": buyer_profile.is_pin_active,
+                        "quota_liters": quota_liters,
+                        "used_liters": used_liters,
+                        "remaining_liters": remaining_liters,
+                        "is_eligible": is_eligible_driver,
+                    },
+                    "vehicles": vehicles,
+                }
+
+                await self.transaction_service.log_cashier_scan_event(
+                    cashier_user=current_user,
+                    lookup_method=lookup_method,
+                    lookup_value=nfc_id,
+                    result=CashierScanResult.SUCCESS,
+                    buyer_profile=buyer_profile,
+                )
+                return response
 
         if not buyer_profile or buyer_profile.user is None:
             await self.transaction_service.log_cashier_scan_event(
@@ -140,11 +311,11 @@ class VehicleService:
                 lookup_method=lookup_method,
                 lookup_value=nfc_id,
                 result=CashierScanResult.FAILED,
-                error_message="Buyer profile not found for the provided NFC ID or NIK.",
+                error_message="Buyer profile or Vehicle not found for the provided NFC ID or NIK.",
             )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Buyer profile not found for the provided NFC ID or NIK.",
+                detail="Buyer profile or Vehicle not found for the provided NFC ID or NIK.",
             )
 
         ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(
@@ -193,6 +364,18 @@ class VehicleService:
                 }
             )
 
+        from app.modules.subsidies.service import SubsidyService
+        subsidy_service = SubsidyService(self.db)
+        personal_quota = await subsidy_service.get_or_sync_personal_quota(
+            buyer_profile=buyer_profile,
+            month=current_time.month,
+            year=current_time.year,
+        )
+        quota_liters = float(Decimal(personal_quota.quota_liters)) if personal_quota else 0.0
+        used_liters = float(Decimal(personal_quota.used_liters)) if personal_quota else 0.0
+        remaining_liters = max(quota_liters - used_liters, 0.0)
+        is_eligible = personal_quota.is_active if personal_quota else False
+
         response = {
             "buyer": {
                 "buyer_profile_id": buyer_profile.id,
@@ -202,6 +385,10 @@ class VehicleService:
                 "verification_status": buyer_profile.verification_status.value,
                 "risk_score": float(Decimal(buyer_profile.risk_score)),
                 "is_pin_active": buyer_profile.is_pin_active,
+                "quota_liters": quota_liters,
+                "used_liters": used_liters,
+                "remaining_liters": remaining_liters,
+                "is_eligible": is_eligible,
             },
             "vehicles": vehicles,
         }
@@ -374,9 +561,6 @@ class VehicleService:
             )
             await self.repo.create_vehicle_ownership(ownership)
 
-            final_storage_dir = self.STORAGE_ROOT / str(ownership.id)
-            final_storage_dir.mkdir(parents=True, exist_ok=True)
-
             copied_documents = []
             for request_document in request.documents:
                 copied_documents.append(
@@ -384,7 +568,6 @@ class VehicleService:
                         ownership_id=ownership.id,
                         request_id=request.id,
                         request_document=request_document,
-                        final_storage_dir=final_storage_dir,
                     )
                 )
 
@@ -481,7 +664,7 @@ class VehicleService:
         current_user: User,
         ownership_id: str,
         document_id: str,
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         buyer_profile = await self.repo.get_buyer_profile_by_user_id(current_user.id)
         if not buyer_profile:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Buyer profile not found for current user.")
@@ -494,14 +677,17 @@ class VehicleService:
         if not document or document.vehicle_ownership_id != ownership.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle ownership document not found")
 
-        file_path = self.STORAGE_ROOT / document.storage_key
-        if not file_path.exists():
+        try:
+            content, content_type = self.storage.get_file(document.storage_key)
+        except Exception:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored vehicle ownership document file not found")
 
-        return FileResponse(
-            path=file_path,
-            media_type=document.mime_type or "application/octet-stream",
-            filename=document.original_filename or file_path.name,
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{document.original_filename or "document"}"'
+            }
         )
 
     async def stream_vehicle_ownership_request_document(
@@ -509,20 +695,23 @@ class VehicleService:
         current_user: User,
         request_id: str,
         document_id: str,
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         request = await self.get_vehicle_ownership_request_for_buyer(current_user=current_user, request_id=request_id)
         document = await self.repo.get_vehicle_ownership_request_document_by_id(document_id)
         if not document or document.vehicle_ownership_request_id != request.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle ownership request document not found")
 
-        file_path = self.REQUEST_STORAGE_ROOT / document.storage_key
-        if not file_path.exists():
+        try:
+            content, content_type = self.storage.get_file(document.storage_key)
+        except Exception:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored vehicle ownership request document file not found")
 
-        return FileResponse(
-            path=file_path,
-            media_type=document.mime_type or "application/octet-stream",
-            filename=document.original_filename or file_path.name,
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{document.original_filename or "document"}"'
+            }
         )
 
     async def update_vehicle_ownership(
@@ -595,22 +784,21 @@ class VehicleService:
             assigned_user_id=parsed_assigned_user_id,
         )
 
-        storage_dir: Path | None = None
+        uploaded_keys: list[str] = []
         try:
             await self.repo.create_vehicle_ownership(ownership)
-            storage_dir = self.STORAGE_ROOT / str(ownership.id)
             documents = [
                 await self._build_document(
                     ownership_id=ownership.id,
                     upload=stnk_photo,
                     document_type=VehicleOwnershipDocumentType.STNK_PHOTO,
-                    storage_dir=storage_dir,
+                    uploaded_keys=uploaded_keys,
                 ),
                 await self._build_document(
                     ownership_id=ownership.id,
                     upload=vehicle_photo,
                     document_type=VehicleOwnershipDocumentType.VEHICLE_PHOTO,
-                    storage_dir=storage_dir,
+                    uploaded_keys=uploaded_keys,
                 ),
             ]
 
@@ -620,7 +808,7 @@ class VehicleService:
                         ownership_id=ownership.id,
                         upload=productive_business_proof,
                         document_type=VehicleOwnershipDocumentType.PRODUCTIVE_BUSINESS_PROOF,
-                        storage_dir=storage_dir,
+                        uploaded_keys=uploaded_keys,
                     )
                 )
 
@@ -639,11 +827,11 @@ class VehicleService:
             await self.repo.commit()
         except HTTPException:
             await self.repo.rollback()
-            self._cleanup_storage_dir(storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
         except Exception:
             await self.repo.rollback()
-            self._cleanup_storage_dir(storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
 
         saved_ownership = await self.repo.get_vehicle_ownership_by_id(str(ownership.id))
@@ -746,22 +934,21 @@ class VehicleService:
             status=VehicleOwnershipRequestStatus.PENDING,
         )
 
-        storage_dir: Path | None = None
+        uploaded_keys: list[str] = []
         try:
             await self.repo.create_vehicle_ownership_request(request)
-            storage_dir = self.REQUEST_STORAGE_ROOT / str(request.id)
             documents = [
                 await self._build_request_document(
                     request_id=request.id,
                     upload=stnk_photo,
                     document_type=VehicleOwnershipDocumentType.STNK_PHOTO,
-                    storage_dir=storage_dir,
+                    uploaded_keys=uploaded_keys,
                 ),
                 await self._build_request_document(
                     request_id=request.id,
                     upload=vehicle_photo,
                     document_type=VehicleOwnershipDocumentType.VEHICLE_PHOTO,
-                    storage_dir=storage_dir,
+                    uploaded_keys=uploaded_keys,
                 ),
             ]
             if productive_business_proof is not None:
@@ -770,18 +957,18 @@ class VehicleService:
                         request_id=request.id,
                         upload=productive_business_proof,
                         document_type=VehicleOwnershipDocumentType.PRODUCTIVE_BUSINESS_PROOF,
-                        storage_dir=storage_dir,
+                        uploaded_keys=uploaded_keys,
                     )
                 )
             await self.repo.add_request_documents(documents)
             await self.repo.commit()
         except HTTPException:
             await self.repo.rollback()
-            self._cleanup_storage_dir(storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
         except Exception:
             await self.repo.rollback()
-            self._cleanup_storage_dir(storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
 
         saved_request = await self.repo.get_vehicle_ownership_request_by_id(str(request.id))
@@ -855,7 +1042,7 @@ class VehicleService:
         ownership_id,
         upload: UploadFile,
         document_type: VehicleOwnershipDocumentType,
-        storage_dir: Path,
+        uploaded_keys: list[str],
     ) -> VehicleOwnershipDocument:
         file_bytes = await upload.read()
         if not file_bytes:
@@ -869,12 +1056,12 @@ class VehicleService:
                 detail=f"{document_type.value} file exceeds the 5 MB upload limit.",
             )
 
-        storage_dir.mkdir(parents=True, exist_ok=True)
         suffix = self._guess_file_suffix(upload)
         file_name = f"{document_type.value.lower().replace('_', '-')}{suffix}"
-        storage_key = f"{ownership_id}/{file_name}"
-        file_path = storage_dir / file_name
-        file_path.write_bytes(file_bytes)
+        storage_key = f"vehicle-ownerships/{ownership_id}/{file_name}"
+        
+        self.storage.save_file(storage_key, file_bytes, upload.content_type)
+        uploaded_keys.append(storage_key)
 
         return VehicleOwnershipDocument(
             vehicle_ownership_id=ownership_id,
@@ -891,7 +1078,7 @@ class VehicleService:
         request_id,
         upload: UploadFile,
         document_type: VehicleOwnershipDocumentType,
-        storage_dir: Path,
+        uploaded_keys: list[str],
     ) -> VehicleOwnershipRequestDocument:
         file_bytes = await upload.read()
         if not file_bytes:
@@ -905,12 +1092,12 @@ class VehicleService:
                 detail=f"{document_type.value} file exceeds the 5 MB upload limit.",
             )
 
-        storage_dir.mkdir(parents=True, exist_ok=True)
         suffix = self._guess_file_suffix(upload)
         file_name = f"{document_type.value.lower().replace('_', '-')}{suffix}"
-        storage_key = f"{request_id}/{file_name}"
-        file_path = storage_dir / file_name
-        file_path.write_bytes(file_bytes)
+        storage_key = f"vehicle-ownership-requests/{request_id}/{file_name}"
+        
+        self.storage.save_file(storage_key, file_bytes, upload.content_type)
+        uploaded_keys.append(storage_key)
 
         return VehicleOwnershipRequestDocument(
             vehicle_ownership_request_id=request_id,
@@ -927,19 +1114,19 @@ class VehicleService:
         ownership_id: UUID,
         request_id: UUID,
         request_document: VehicleOwnershipRequestDocument,
-        final_storage_dir: Path,
     ) -> VehicleOwnershipDocument:
-        source_file_path = self.REQUEST_STORAGE_ROOT / request_document.storage_key
-        if not source_file_path.exists():
+        try:
+            content, content_type = self.storage.get_file(request_document.storage_key)
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Stored vehicle ownership request document file not found during approval.",
             )
 
-        file_name = source_file_path.name
-        target_storage_key = f"{ownership_id}/{file_name}"
-        target_file_path = final_storage_dir / file_name
-        shutil.copy2(source_file_path, target_file_path)
+        file_name = request_document.storage_key.split("/")[-1]
+        target_storage_key = f"vehicle-ownerships/{ownership_id}/{file_name}"
+        
+        self.storage.save_file(target_storage_key, content, content_type)
 
         return VehicleOwnershipDocument(
             vehicle_ownership_id=ownership_id,
@@ -961,9 +1148,13 @@ class VehicleService:
             return guessed_suffix
         return ".bin"
 
-    def _cleanup_storage_dir(self, storage_dir: Path | None) -> None:
-        if storage_dir and storage_dir.exists():
-            shutil.rmtree(storage_dir, ignore_errors=True)
+    def _cleanup_uploaded_keys(self, uploaded_keys: list[str]) -> None:
+        for key in uploaded_keys:
+            try:
+                self.storage.delete_file(key)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to delete {key} during cleanup: {e}")
 
     def _to_vehicle_category(self, usage_type: VehicleUsageType) -> str:
         if usage_type == VehicleUsageType.PERSONAL:
@@ -1094,28 +1285,30 @@ class VehicleService:
                 detail="Buyer profile not found for KK eligibility recompute.",
             )
 
+        from app.modules.registries.models import CitizenRegistryMockup
+        from app.modules.subsidies.models import SubsidySetting, KKSubsidyEligibility, EligibilityStatus
+        from sqlalchemy import select
+
+        # 1. Ambil income_threshold dari SubsidySetting
+        setting_stmt = select(SubsidySetting)
+        setting = (await self.db.execute(setting_stmt)).scalars().first()
+        income_threshold = Decimal(setting.income_threshold) if setting else Decimal("5000000.00")
+
+        # 2. Hitung jumlah anggota keluarga dan rata-rata penghasilan KK
+        citizen_stmt = select(CitizenRegistryMockup).filter(CitizenRegistryMockup.kk_id == buyer_profile.kk_id)
+        citizens = (await self.db.execute(citizen_stmt)).scalars().all()
+        
+        member_count = len(citizens)
+        total_income = sum(Decimal(c.penghasilan or 0) for c in citizens)
+        avg_income = total_income / Decimal(member_count) if member_count > 0 else Decimal("0.00")
+
+        # 3. Ambil/buat KKSubsidyEligibility
         personal_policy = await self.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
         if personal_policy is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Subsidy policy for PERSONAL usage type not found.",
             )
-
-        buyer_profiles = await self.repo.get_buyer_profiles_by_kk_id(buyer_profile.kk_id)
-        owner_ids = [profile.id for profile in buyer_profiles]
-        ownerships = await self.repo.get_vehicle_ownerships_by_owner_ids(owner_ids)
-
-        unique_vehicle_ids: set[UUID] = set()
-        total_njkb = Decimal("0")
-        for ownership in ownerships:
-            if ownership.owner_type == VehicleOwnerType.COMPANY:
-                continue
-            if ownership.vehicle_id in unique_vehicle_ids:
-                continue
-            unique_vehicle_ids.add(ownership.vehicle_id)
-            registry_vehicle = await self.repo.get_vehicle_registry_by_id(ownership.vehicle_id)
-            if registry_vehicle is not None:
-                total_njkb += Decimal(registry_vehicle.njkb)
 
         eligibility = await self.repo.get_latest_kk_subsidy_eligibility(
             kk_id=buyer_profile.kk_id,
@@ -1125,20 +1318,20 @@ class VehicleService:
             eligibility = KKSubsidyEligibility(
                 kk_id=buyer_profile.kk_id,
                 subsidy_policy_id=personal_policy.id,
-                total_njkb=total_njkb,
+                total_njkb=avg_income,
                 eligibility_status=EligibilityStatus.ELIGIBLE,
             )
             await self.repo.create_kk_subsidy_eligibility(eligibility)
 
-        is_eligible = total_njkb <= Decimal(personal_policy.max_allowed_njkb)
-        eligibility.total_njkb = total_njkb
+        is_eligible = avg_income <= income_threshold
+        eligibility.total_njkb = avg_income
         eligibility.eligibility_status = (
             EligibilityStatus.ELIGIBLE if is_eligible else EligibilityStatus.NOT_ELIGIBLE
         )
         eligibility.eligibility_reason = (
-            f"Total NJKB kendaraan unik dalam KK adalah {total_njkb}."
+            f"Rata-rata penghasilan KK adalah Rp {avg_income:,.2f} (di bawah batas Rp {income_threshold:,.2f})."
             if is_eligible
-            else f"Total NJKB kendaraan unik dalam KK melebihi batas {personal_policy.max_allowed_njkb}."
+            else f"Rata-rata penghasilan KK adalah Rp {avg_income:,.2f} (melebihi batas Rp {income_threshold:,.2f})."
         )
         eligibility.checked_at = self._utcnow()
 
@@ -1192,19 +1385,22 @@ class VehicleService:
         self,
         request_id: str,
         document_id: str,
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         document = await self.repo.get_vehicle_ownership_request_document_by_id(document_id)
         if not document or str(document.vehicle_ownership_request_id) != str(request_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle ownership request document not found")
 
-        file_path = self.REQUEST_STORAGE_ROOT / document.storage_key
-        if not file_path.exists():
+        try:
+            content, content_type = self.storage.get_file(document.storage_key)
+        except Exception:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored vehicle ownership request document file not found")
 
-        return FileResponse(
-            path=file_path,
-            media_type=document.mime_type or "application/octet-stream",
-            filename=document.original_filename or file_path.name,
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{document.original_filename or "document"}"'
+            }
         )
 
     async def verify_vehicle_request_admin(
@@ -1264,9 +1460,6 @@ class VehicleService:
                 )
                 await self.repo.create_vehicle_ownership(ownership)
 
-                final_storage_dir = self.STORAGE_ROOT / str(ownership.id)
-                final_storage_dir.mkdir(parents=True, exist_ok=True)
-
                 copied_documents = []
                 for request_document in request.documents:
                     copied_documents.append(
@@ -1274,7 +1467,6 @@ class VehicleService:
                             ownership_id=ownership.id,
                             request_id=request.id,
                             request_document=request_document,
-                            final_storage_dir=final_storage_dir,
                         )
                     )
 

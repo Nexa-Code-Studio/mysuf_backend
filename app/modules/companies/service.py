@@ -1,6 +1,5 @@
 import hashlib
 import mimetypes
-import shutil
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.companies.models import Company
 from app.modules.companies.repository import CompanyRepository
 from app.modules.companies.schemas import CompanyCreate, CompanyVerifyRequest
+from app.core.storage import StorageService
 
 # Root storage directory – absolute path anchored to the project root (4 parents up from this file)
 STORAGE_ROOT = Path(__file__).resolve().parents[4] / "storage" / "companies"
@@ -22,6 +22,7 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB per document
 class CompanyService:
     def __init__(self, db: AsyncSession):
         self.repo = CompanyRepository(db)
+        self.storage = StorageService()
 
     # ------------------------------------------------------------------
     # Public API
@@ -58,25 +59,23 @@ class CompanyService:
             status="Belum Verifikasi",
         )
 
-        company_storage_dir: Path | None = None
+        uploaded_keys: list[str] = []
         try:
             await self.repo.create_company(company)
 
-            company_storage_dir = STORAGE_ROOT / str(company.id)
-
-            company.siup_doc = await self._save_document(siup_file, "siup", company_storage_dir, company.id)
-            company.tdp_doc = await self._save_document(tdp_file, "tdp", company_storage_dir, company.id)
-            company.npwp_doc = await self._save_document(npwp_file, "npwp", company_storage_dir, company.id)
-            company.nib_doc = await self._save_document(nib_file, "nib", company_storage_dir, company.id)
+            company.siup_doc = await self._save_document(siup_file, "siup", company.id, uploaded_keys)
+            company.tdp_doc = await self._save_document(tdp_file, "tdp", company.id, uploaded_keys)
+            company.npwp_doc = await self._save_document(npwp_file, "npwp", company.id, uploaded_keys)
+            company.nib_doc = await self._save_document(nib_file, "nib", company.id, uploaded_keys)
 
             await self.repo.commit()
         except HTTPException:
             await self.repo.rollback()
-            self._cleanup_storage_dir(company_storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
         except Exception:
             await self.repo.rollback()
-            self._cleanup_storage_dir(company_storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
 
         saved = await self.repo.get_company(company.id)
@@ -113,8 +112,8 @@ class CompanyService:
         self,
         upload: Optional[UploadFile],
         label: str,
-        storage_dir: Path,
         company_id,
+        uploaded_keys: list[str],
     ) -> Optional[str]:
         """Save an uploaded file to storage and return a storage_key (relative path)."""
         if not upload or not upload.filename:
@@ -130,14 +129,14 @@ class CompanyService:
                 detail=f"File {label.upper()} melebihi batas ukuran 10 MB.",
             )
 
-        storage_dir.mkdir(parents=True, exist_ok=True)
-
         suffix = self._guess_file_suffix(upload)
         file_name = f"{label}{suffix}"
-        file_path = storage_dir / file_name
-        file_path.write_bytes(file_bytes)
+        storage_key = f"companies/{company_id}/{file_name}"
+        
+        self.storage.save_file(storage_key, file_bytes, upload.content_type)
+        uploaded_keys.append(storage_key)
 
-        # storage_key: "company_id/filename" – used to reconstruct URL later
+        # storage_key returned to DB matches the legacy "company_id/filename" pattern to stay backward compatible
         return f"{company_id}/{file_name}"
 
     async def _validate_document_upload(self, upload: UploadFile, label: str) -> None:
@@ -168,6 +167,10 @@ class CompanyService:
             return guessed
         return ".bin"
 
-    def _cleanup_storage_dir(self, storage_dir: Path | None) -> None:
-        if storage_dir and storage_dir.exists():
-            shutil.rmtree(storage_dir, ignore_errors=True)
+    def _cleanup_uploaded_keys(self, uploaded_keys: list[str]) -> None:
+        for key in uploaded_keys:
+            try:
+                self.storage.delete_file(key)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to delete {key} during cleanup: {e}")

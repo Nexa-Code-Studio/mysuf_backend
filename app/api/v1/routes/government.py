@@ -56,73 +56,37 @@ async def get_government_eligibility(
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    # Fetch PERSONAL policy for threshold and eligibility lookup
-    policy_stmt = select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
-    policy = (await db.execute(policy_stmt)).scalars().first()
-    threshold = policy.max_allowed_njkb if policy else Decimal("300000000.00")
+    # 1. Fetch income_threshold from SubsidySetting
+    from app.modules.subsidies.models import SubsidySetting
+    setting_stmt = select(SubsidySetting)
+    setting = (await db.execute(setting_stmt)).scalars().first()
+    threshold = setting.income_threshold if setting else Decimal("5000000.00")
 
-    # Base query for KK
-    stmt = select(KK)
+    # Base query for CitizenRegistryMockup
+    from app.modules.registries.models import CitizenRegistryMockup
+    stmt = select(CitizenRegistryMockup)
     if q:
-        # Filter by KK code
-        stmt = stmt.filter(KK.code.ilike(f"%{q}%"))
+        stmt = stmt.filter(
+            (CitizenRegistryMockup.nama.ilike(f"%{q}%")) |
+            (CitizenRegistryMockup.nik.ilike(f"%{q}%"))
+        )
 
-    # Execute and paginate
+    # Execute
     result = await db.execute(stmt)
-    kks = result.scalars().all()
+    citizens = result.scalars().all()
 
     items = []
-    for kk in kks:
-        # Find buyer profile IDs in this KK
-        bp_stmt = select(BuyerProfile.id).filter(BuyerProfile.kk_id == kk.id)
-        bp_ids = (await db.execute(bp_stmt)).scalars().all()
-
-        # Count unique vehicles in VehicleOwnership
-        if bp_ids:
-            v_stmt = select(func.count(func.distinct(VehicleOwnership.vehicle_id))).filter(
-                VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
-                VehicleOwnership.owner_id.in_(bp_ids)
-            )
-            vehicle_count = (await db.execute(v_stmt)).scalar() or 0
-        else:
-            vehicle_count = 0
-
-        # Fetch latest KKSubsidyEligibility
-        if policy:
-            elig_stmt = select(KKSubsidyEligibility).filter(
-                KKSubsidyEligibility.kk_id == kk.id,
-                KKSubsidyEligibility.subsidy_policy_id == policy.id
-            ).order_by(KKSubsidyEligibility.checked_at.desc(), KKSubsidyEligibility.id.desc()).limit(1)
-            elig = (await db.execute(elig_stmt)).scalars().first()
-        else:
-            elig = None
-
-        if elig:
-            total_njkb = elig.total_njkb
-            is_eligible = elig.eligibility_status == EligibilityStatus.ELIGIBLE
-        else:
-            # Fallback recompute dynamically
-            total_njkb = Decimal("0")
-            if bp_ids:
-                v_ids_stmt = select(func.distinct(VehicleOwnership.vehicle_id)).filter(
-                    VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
-                    VehicleOwnership.owner_id.in_(bp_ids)
-                )
-                unique_vehicle_ids = (await db.execute(v_ids_stmt)).scalars().all()
-                for vid in unique_vehicle_ids:
-                    reg_stmt = select(VehicleRegistryMockup.njkb).filter(VehicleRegistryMockup.id == vid)
-                    njkb_val = (await db.execute(reg_stmt)).scalar()
-                    if njkb_val:
-                        total_njkb += Decimal(njkb_val)
-            is_eligible = total_njkb <= threshold
+    for citizen in citizens:
+        penghasilan = Decimal(citizen.penghasilan or 0)
+        is_eligible = penghasilan <= threshold
 
         items.append(
             KKEligibilityItem(
-                id=elig.id if elig else kk.id,
-                kk_id=kk.id,
-                code=kk.code,
-                vehicle_count=vehicle_count,
-                total_njkb=total_njkb,
+                id=citizen.id,
+                nik=citizen.nik,
+                nama=citizen.nama,
+                pekerjaan=citizen.pekerjaan or "LAINNYA",
+                penghasilan=penghasilan,
                 threshold=threshold,
                 eligible="Ya" if is_eligible else "Tidak"
             )
@@ -148,6 +112,7 @@ async def get_government_eligibility(
     }
 
 
+
 @router.put("/eligibility/threshold")
 async def update_government_eligibility_threshold(
     http_request: Request,
@@ -155,14 +120,15 @@ async def update_government_eligibility_threshold(
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    policy_stmt = select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
-    policy = (await db.execute(policy_stmt)).scalars().first()
-    if not policy:
-        raise HTTPException(status_code=404, detail="Personal subsidy policy not found")
+    from app.modules.subsidies.models import SubsidySetting
+    setting_stmt = select(SubsidySetting)
+    setting = (await db.execute(setting_stmt)).scalars().first()
+    if not setting:
+        raise HTTPException(status_code=404, detail="Subsidy settings not found")
 
-    policy.max_allowed_njkb = request.threshold
+    setting.income_threshold = request.threshold
     await db.commit()
-    await db.refresh(policy)
+    await db.refresh(setting)
 
     # Recalculate eligibility for ALL KKs in the database
     kk_stmt = select(KK)
@@ -182,15 +148,15 @@ async def update_government_eligibility_threshold(
     ip = SystemAuditLogService.resolve_ip(http_request)
     audit_svc = SystemAuditLogService(db)
     
-    # Format NJKB threshold amount nicely (e.g. 300.000.000)
-    formatted_val = f"Rp {int(policy.max_allowed_njkb):,}".replace(",", ".")
+    # Format Income threshold amount nicely (e.g. 5.000.000)
+    formatted_val = f"Rp {int(setting.income_threshold):,}".replace(",", ".")
     await audit_svc.log_action(
         actor=current_user,
-        action=f"Update bobot kelayakan: NJKB {formatted_val}",
+        action=f"Update bobot kelayakan: Penghasilan KTP {formatted_val}",
         ip_address=ip
     )
 
-    return {"threshold": int(policy.max_allowed_njkb)}
+    return {"threshold": int(setting.income_threshold)}
 
 
 @router.get("/quota-policies", response_model=GovernmentQuotaPoliciesResponse)
@@ -198,22 +164,24 @@ async def get_government_quota_policies(
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    policies_stmt = select(SubsidyPolicy).filter(
-        SubsidyPolicy.usage_type.in_([
-            VehicleUsageType.PERSONAL,
-            VehicleUsageType.COMMERCIAL_MOTORCYCLE,
-            VehicleUsageType.COMMERCIAL_CAR,
-            VehicleUsageType.COMMERCIAL_TRUCK
-        ])
-    )
-    policies = (await db.execute(policies_stmt)).scalars().all()
-    policies_map = {p.usage_type: p.monthly_quota_liters for p in policies}
+    from app.modules.subsidies.models import SubsidySetting
+    setting_stmt = select(SubsidySetting)
+    setting = (await db.execute(setting_stmt)).scalars().first()
+    
+    if not setting:
+        return {
+            "warga": Decimal("100.00"),
+            "motor_komersial": Decimal("50.00"),
+            "mobil_komersial": Decimal("100.00"),
+            "truk_komersial": Decimal("50.00")
+        }
 
+    bonuses = setting.occupation_bonuses or {}
     return {
-        "warga": policies_map.get(VehicleUsageType.PERSONAL, Decimal("250.00")),
-        "motor_komersial": policies_map.get(VehicleUsageType.COMMERCIAL_MOTORCYCLE, Decimal("100.00")),
-        "mobil_komersial": policies_map.get(VehicleUsageType.COMMERCIAL_CAR, Decimal("250.00")),
-        "truk_komersial": policies_map.get(VehicleUsageType.COMMERCIAL_TRUCK, Decimal("500.00"))
+        "warga": Decimal(setting.default_quota_liters),
+        "motor_komersial": Decimal(str(bonuses.get("OJOL", 50.0))),
+        "mobil_komersial": Decimal(str(bonuses.get("NELAYAN", 100.0))),
+        "truk_komersial": Decimal(str(bonuses.get("UMKM", 50.0)))
     }
 
 
@@ -224,25 +192,25 @@ async def update_government_quota_policies(
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    # Update PERSONAL
-    policy_p = (await db.execute(select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL))).scalars().first()
-    if policy_p:
-        policy_p.monthly_quota_liters = request.warga
+    from app.modules.subsidies.models import SubsidySetting
+    setting_stmt = select(SubsidySetting)
+    setting = (await db.execute(setting_stmt)).scalars().first()
+    
+    if not setting:
+        setting = SubsidySetting(
+            income_threshold=Decimal("5000000.00"),
+            default_quota_liters=Decimal("100.00"),
+            occupation_bonuses={"OJOL": 50.0, "NELAYAN": 100.0, "UMKM": 50.0}
+        )
+        db.add(setting)
+        await db.flush()
 
-    # Update COMMERCIAL_MOTORCYCLE
-    policy_mm = (await db.execute(select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.COMMERCIAL_MOTORCYCLE))).scalars().first()
-    if policy_mm:
-        policy_mm.monthly_quota_liters = request.motor_komersial
-
-    # Update COMMERCIAL_CAR
-    policy_cc = (await db.execute(select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.COMMERCIAL_CAR))).scalars().first()
-    if policy_cc:
-        policy_cc.monthly_quota_liters = request.mobil_komersial
-
-    # Update COMMERCIAL_TRUCK
-    policy_ct = (await db.execute(select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.COMMERCIAL_TRUCK))).scalars().first()
-    if policy_ct:
-        policy_ct.monthly_quota_liters = request.truk_komersial
+    setting.default_quota_liters = request.warga
+    setting.occupation_bonuses = {
+        "OJOL": float(request.motor_komersial),
+        "NELAYAN": float(request.mobil_komersial),
+        "UMKM": float(request.truk_komersial)
+    }
 
     await db.commit()
 
@@ -252,9 +220,9 @@ async def update_government_quota_policies(
     audit_svc = SystemAuditLogService(db)
     
     action = (
-        f"Update kebijakan kuota bulanan: Warga {int(request.warga)}L, "
-        f"Motor {int(request.motor_komersial)}L, Mobil {int(request.mobil_komersial)}L, "
-        f"Truk {int(request.truk_komersial)}L"
+        f"Update kebijakan kuota bulanan: Kuota Dasar Warga {int(request.warga)}L, "
+        f"Bonus OJOL {int(request.motor_komersial)}L, Bonus Nelayan {int(request.mobil_komersial)}L, "
+        f"Bonus UMKM {int(request.truk_komersial)}L"
     )
     await audit_svc.log_action(
         actor=current_user,
@@ -270,15 +238,16 @@ async def get_government_quota_transactions(
     current_user: User = Depends(require_roles([UserRole.SUPER_ADMIN, UserRole.GOV_ADMIN])),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    # Pre-query policies
-    policies_stmt = select(SubsidyPolicy)
-    policies = (await db.execute(policies_stmt)).scalars().all()
-    p_map = {p.usage_type: p.monthly_quota_liters for p in policies}
+    from app.modules.subsidies.models import SubsidySetting
+    from app.modules.registries.models import CitizenRegistryMockup
+    from sqlalchemy.orm import selectinload
 
-    warga_quota = p_map.get(VehicleUsageType.PERSONAL, Decimal("250.00"))
-    motor_quota = p_map.get(VehicleUsageType.COMMERCIAL_MOTORCYCLE, Decimal("100.00"))
-    car_quota = p_map.get(VehicleUsageType.COMMERCIAL_CAR, Decimal("250.00"))
-    truck_quota = p_map.get(VehicleUsageType.COMMERCIAL_TRUCK, Decimal("500.00"))
+    setting_stmt = select(SubsidySetting)
+    setting = (await db.execute(setting_stmt)).scalars().first()
+    
+    income_threshold = Decimal(setting.income_threshold) if setting else Decimal("5000000.00")
+    default_quota = Decimal(setting.default_quota_liters) if setting else Decimal("100.00")
+    bonuses = setting.occupation_bonuses if setting else {"OJOL": 50.0, "NELAYAN": 100.0, "UMKM": 50.0}
 
     # Fetch Buyer Profiles
     stmt = select(BuyerProfile).options(selectinload(BuyerProfile.user))
@@ -289,26 +258,26 @@ async def get_government_quota_transactions(
         if not profile.user:
             continue
 
-        # Fetch vehicles for this profile
-        v_stmt = select(VehicleOwnership).filter(
-            VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
-            VehicleOwnership.owner_id == profile.id
-        )
-        ownerships = (await db.execute(v_stmt)).scalars().all()
+        # Look up citizen kependudukan
+        cit_stmt = select(CitizenRegistryMockup).filter(CitizenRegistryMockup.nik == profile.nik_snapshot)
+        citizen = (await db.execute(cit_stmt)).scalars().first()
 
-        # Check vehicle usage types
-        has_personal = any(o.usage_type == VehicleUsageType.PERSONAL for o in ownerships)
-        has_motor = any(o.usage_type == VehicleUsageType.COMMERCIAL_MOTORCYCLE for o in ownerships)
-        has_car = any(o.usage_type == VehicleUsageType.COMMERCIAL_CAR for o in ownerships)
-        has_truck = any(o.usage_type == VehicleUsageType.COMMERCIAL_TRUCK for o in ownerships)
+        is_eligible = False
+        income = Decimal("0.00")
+        job = "LAINNYA"
+        bonus_val = Decimal("0.00")
 
-        base1 = warga_quota if has_personal else Decimal("0.00")
-        base2 = motor_quota if has_motor else (car_quota if has_car else Decimal("0.00"))
-        base3 = truck_quota if has_truck else Decimal("0.00")
+        if citizen:
+            income = Decimal(citizen.penghasilan or 0)
+            job = citizen.pekerjaan or "LAINNYA"
+            if income <= income_threshold:
+                is_eligible = True
+                bonus_val = Decimal(str(bonuses.get(job, 0.0)))
 
+        base1_val = default_quota if is_eligible else Decimal("0.00")
         risk_index = int(profile.risk_score)
         modifier_val = max(Decimal("0.00"), Decimal("1.00") - (Decimal(risk_index) / Decimal("100.00")))
-        final_quota = (base1 + base2 + base3) * modifier_val
+        final_quota = (base1_val + bonus_val) * modifier_val
 
         # Mask NIK
         nik = profile.nik_snapshot
@@ -318,9 +287,9 @@ async def get_government_quota_transactions(
             GovernmentQuotaTransactionItem(
                 nikSensor=f"NIK {nik_sensor}",
                 nama=profile.user.name,
-                baseQuota1=f"{int(base1)} L",
-                baseQuota2=f"{int(base2)} L",
-                baseQuota3=f"{int(base3)} L",
+                baseQuota1=f"{int(base1_val)} L",
+                baseQuota2=job,                    # Mapped to Citizen Occupation
+                baseQuota3=f"+{int(bonus_val)} L", # Mapped to Occupation Bonus
                 riskIndex=risk_index,
                 modifier=f"{float(modifier_val):.1f}",
                 finalQuota=f"{int(final_quota)} L"

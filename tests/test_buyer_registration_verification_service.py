@@ -50,6 +50,10 @@ async def test_verification_service_completes_attempt(monkeypatch):
         lambda _: object(),
     )
     monkeypatch.setattr(
+        "app.modules.buyer_registrations.image_utils.ImageUtils.load_cv2_image_from_bytes",
+        lambda _: object(),
+    )
+    monkeypatch.setattr(
         "app.modules.buyer_registrations.image_utils.ImageUtils.perspective_correct_ktp",
         lambda image: image,
     )
@@ -93,6 +97,11 @@ async def test_verification_service_completes_attempt(monkeypatch):
         ]
         session.add_all([kk, citizen, attempt, *documents])
         await session.commit()
+
+        from app.core.storage import StorageService
+        storage = StorageService()
+        for doc in documents:
+            storage.save_file(doc.storage_key, b"fake-image-bytes", doc.mime_type)
 
     try:
         async with AsyncSessionLocal() as session:
@@ -166,6 +175,10 @@ async def test_verification_service_fails_on_nik_mismatch(monkeypatch):
         lambda _: object(),
     )
     monkeypatch.setattr(
+        "app.modules.buyer_registrations.image_utils.ImageUtils.load_cv2_image_from_bytes",
+        lambda _: object(),
+    )
+    monkeypatch.setattr(
         "app.modules.buyer_registrations.image_utils.ImageUtils.perspective_correct_ktp",
         lambda image: image,
     )
@@ -205,6 +218,11 @@ async def test_verification_service_fails_on_nik_mismatch(monkeypatch):
         ]
         session.add_all([kk, citizen, attempt, *documents])
         await session.commit()
+
+        from app.core.storage import StorageService
+        storage = StorageService()
+        for doc in documents:
+            storage.save_file(doc.storage_key, b"fake-image-bytes", doc.mime_type)
 
     try:
         async with AsyncSessionLocal() as session:

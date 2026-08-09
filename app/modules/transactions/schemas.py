@@ -239,6 +239,7 @@ class CashierTransactionListItemResponse(BaseModel):
     plate_number_snapshot: str
     nik_snapshot: str | None = None
     buyer_name: str | None = None
+    buyer_foto_ktp_url: str | None = None
     fuel_name: str
     liters: float
     total_amount: float

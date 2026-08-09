@@ -63,6 +63,7 @@ class FleetVehicleItem(BaseModel):
     status: str
     quotaLimit: float
     quotaUsed: float
+    vehicle_nfc_id: Optional[str] = None
 
 class FleetVehicleListResponse(BaseModel):
     items: list[FleetVehicleItem]
@@ -70,6 +71,7 @@ class FleetVehicleListResponse(BaseModel):
 
 class FleetVehicleCreateRequest(BaseModel):
     plate: str
+    vehicle_nfc_id: Optional[str] = None
 
 class FleetVehicleAssignDriverRequest(BaseModel):
     driver_id: Optional[UUID] = None

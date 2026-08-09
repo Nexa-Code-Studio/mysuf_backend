@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from uuid import uuid4
 from sqlalchemy import delete, select
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.main import app
 from app.core.database import AsyncSessionLocal
@@ -39,6 +39,7 @@ async def test_system_activities_api():
         session.add(buyer)
         await session.commit()
 
+
     # Generate Auth Tokens
     super_token = create_access_token(
         subject=super_admin_id,
@@ -59,10 +60,32 @@ async def test_system_activities_api():
     headers_buyer = {"Authorization": f"Bearer {buyer_token}"}
 
     try:
-        # Clear any system audit logs created by other tests to ensure the mock seeder triggers
+        # Clear any system audit logs created by other tests to ensure a clean slate
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SystemAuditLog))
+            
+            # Seed 5 mockup audit logs explicitly for the test assertions
+            now = datetime.utcnow()
+            mock_data = [
+                ("Rama Utama", "Super Admin", "Approve perusahaan: PT Logistik Nusantara Maju", "103.24.118.12", now - timedelta(minutes=5)),
+                ("Sari Widodo", "Admin Pemerintah", "Update bobot kelayakan: NJKB 40%", "180.252.91.44", now - timedelta(minutes=17)),
+                ("Rama Utama", "Super Admin", "Reject warga komersial: KTP 3174012345678901", "103.24.118.12", now - timedelta(hours=10, minutes=30)),
+                ("Dewi Kusuma", "Admin Perusahaan", "Reset MFA akun perusahaan", "36.85.101.77", now - timedelta(hours=13, minutes=5)),
+                ("Rama Utama", "Super Admin", "Tambah user baru: Admin SPBU Bandung", "103.24.118.12", now - timedelta(hours=13, minutes=45)),
+            ]
+
+            for name, role, action, ip, created_at in mock_data:
+                log_entry = SystemAuditLog(
+                    actor_id=None,
+                    actor_name_snapshot=name,
+                    actor_role_snapshot=role,
+                    action=action,
+                    ip_address=ip,
+                    created_at=created_at
+                )
+                session.add(log_entry)
             await session.commit()
+
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # Test 1: Fetch activity logs as BUYER (should get 403 Forbidden)

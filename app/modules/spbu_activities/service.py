@@ -34,13 +34,6 @@ class SpbuActivityService:
         page: int = 1,
         size: int = 100
     ) -> tuple[list[SpbuActivityLog], int]:
-        # First, check if there are any logs for this gas station. If none, seed the default mockup ones.
-        check_stmt = select(func.count(SpbuActivityLog.id)).filter(SpbuActivityLog.gas_station_id == gas_station_id)
-        count_existing = (await self.db.execute(check_stmt)).scalar() or 0
-
-        if count_existing == 0:
-            await self.seed_default_logs(gas_station_id)
-
         # Build main query
         stmt = select(SpbuActivityLog).filter(SpbuActivityLog.gas_station_id == gas_station_id)
         if category and category != "Semua":
@@ -67,23 +60,3 @@ class SpbuActivityService:
 
         return list(items), total
 
-    async def seed_default_logs(self, gas_station_id: UUID) -> None:
-        mock_data = [
-            (SpbuActivityCategory.Keamanan, "Fraud alert ditandai untuk Plat D 9012 DEF.", 10),
-            (SpbuActivityCategory.Sistem, "Pergantian shift berhasil diverifikasi otomatis oleh AI Engine.", 25),
-            (SpbuActivityCategory.Penjualan, "Audit stok tangki solar bawah tanah selesai. Kapasitas: 85%.", 50),
-            (SpbuActivityCategory.Keamanan, "Tindakan cepat diambil terhadap Plat B 9123 KZ. Kasus diselesaikan.", 75),
-            (SpbuActivityCategory.Penjualan, "Penjualan Solar Subsidi mencapai batas kuota harian wilayah (Nozzle 03).", 165),
-            (SpbuActivityCategory.Sistem, "Sistem MySuF sinkronisasi data dengan server BPH Migas berhasil.", 240)
-        ]
-        
-        now = datetime.utcnow()
-        for cat, detail, minutes_ago in mock_data:
-            log_entry = SpbuActivityLog(
-                gas_station_id=gas_station_id,
-                category=cat,
-                detail=detail,
-                created_at=now - timedelta(minutes=minutes_ago)
-            )
-            self.db.add(log_entry)
-        await self.db.commit()

@@ -33,8 +33,8 @@ async def test_cashier_performance_returns_today_summary_and_recent_transactions
 
     gas_station = GasStation(
         name=f"SPBU Performance {uuid4().hex[:6]}",
-        longitude="106.8",
-        latitude="-6.2",
+        longitude=106.8,
+        latitude=-6.2,
     )
     fuel_type = FuelType(
         name="Pertalite",

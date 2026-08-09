@@ -110,6 +110,10 @@ class CashierBuyerByNfcBuyerResponse(BaseModel):
     verification_status: str
     risk_score: float
     is_pin_active: bool = False
+    quota_liters: float | None = None
+    used_liters: float | None = None
+    remaining_liters: float | None = None
+    is_eligible: bool | None = None
 
 
 class CashierBuyerByNfcVehicleResponse(BaseModel):

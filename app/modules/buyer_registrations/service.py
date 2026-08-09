@@ -1,6 +1,5 @@
 import hashlib
 import mimetypes
-import shutil
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -13,6 +12,7 @@ from app.core.security import get_password_hash
 from app.modules.buyer_registrations.models import BuyerDocumentType, BuyerRegistrationAttempt, BuyerRegistrationDocument, BuyerRegistrationStatus
 from app.modules.buyer_registrations.repository import BuyerRegistrationRepository
 from app.modules.buyer_registrations.schemas import BuyerRegistrationAttemptCreate
+from app.core.storage import StorageService
 
 
 class BuyerRegistrationService:
@@ -22,6 +22,7 @@ class BuyerRegistrationService:
 
     def __init__(self, db: AsyncSession):
         self.repo = BuyerRegistrationRepository(db)
+        self.storage = StorageService()
 
     async def submit_attempt(
         self,
@@ -41,39 +42,38 @@ class BuyerRegistrationService:
             ocr_raw_text=registration_in.ocr_raw_text,
         )
 
-        attempt_storage_dir: Path | None = None
+        uploaded_keys: list[str] = []
         try:
             await self.repo.create_attempt(attempt)
-            attempt_storage_dir = self.STORAGE_ROOT / str(attempt.id)
             ktp_document = await self._build_document(
                 attempt_id=attempt.id,
                 upload=ktp_photo,
                 document_type=BuyerDocumentType.KTP_PHOTO,
-                storage_dir=attempt_storage_dir,
+                uploaded_keys=uploaded_keys,
             )
             selfie_document = await self._build_document(
                 attempt_id=attempt.id,
                 upload=selfie_photo,
                 document_type=BuyerDocumentType.SELFIE_PHOTO,
-                storage_dir=attempt_storage_dir,
+                uploaded_keys=uploaded_keys,
             )
 
             await self.repo.add_documents([ktp_document, selfie_document])
             await self.repo.commit()
         except HTTPException:
             await self.repo.rollback()
-            self._cleanup_storage_dir(attempt_storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
         except IntegrityError:
             await self.repo.rollback()
-            self._cleanup_storage_dir(attempt_storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="An active buyer registration attempt already exists for this email or NIK.",
             )
         except Exception:
             await self.repo.rollback()
-            self._cleanup_storage_dir(attempt_storage_dir)
+            self._cleanup_uploaded_keys(uploaded_keys)
             raise
 
         saved_attempt = await self.repo.get_attempt_by_id(str(attempt.id))
@@ -140,7 +140,7 @@ class BuyerRegistrationService:
         attempt_id: UUID,
         upload: UploadFile,
         document_type: BuyerDocumentType,
-        storage_dir: Path,
+        uploaded_keys: list[str],
     ) -> BuyerRegistrationDocument:
         file_bytes = await upload.read()
         if not file_bytes:
@@ -154,14 +154,13 @@ class BuyerRegistrationService:
                 detail=f"{document_type.value} file exceeds the 5 MB upload limit.",
             )
 
-        storage_dir.mkdir(parents=True, exist_ok=True)
-
         suffix = self._guess_file_suffix(upload)
         file_basename = "ktp-photo" if document_type == BuyerDocumentType.KTP_PHOTO else "selfie-photo"
         file_name = f"{file_basename}{suffix}"
-        storage_key = f"{attempt_id}/{file_name}"
-        file_path = storage_dir / file_name
-        file_path.write_bytes(file_bytes)
+        storage_key = f"buyer-registrations/{attempt_id}/{file_name}"
+        
+        self.storage.save_file(storage_key, file_bytes, upload.content_type)
+        uploaded_keys.append(storage_key)
 
         return BuyerRegistrationDocument(
             registration_attempt_id=attempt_id,
@@ -184,6 +183,10 @@ class BuyerRegistrationService:
 
         return ".bin"
 
-    def _cleanup_storage_dir(self, storage_dir: Path | None) -> None:
-        if storage_dir and storage_dir.exists():
-            shutil.rmtree(storage_dir, ignore_errors=True)
+    def _cleanup_uploaded_keys(self, uploaded_keys: list[str]) -> None:
+        for key in uploaded_keys:
+            try:
+                self.storage.delete_file(key)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to delete {key} during cleanup: {e}")

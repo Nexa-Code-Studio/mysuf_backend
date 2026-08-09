@@ -240,6 +240,7 @@ async def list_fleet_vehicles(
                 status="Aktif",
                 quotaLimit=limit,
                 quotaUsed=used,
+                vehicle_nfc_id=o.vehicle_nfc_id,
             )
         )
 
@@ -289,6 +290,14 @@ async def register_fleet_vehicle(
     elif registry_vehicle.jenis == VehicleClass.MOTORCYCLE:
         usage_type = VehicleUsageType.COMMERCIAL_MOTORCYCLE
 
+    # Validate and save vehicle_nfc_id if provided
+    if body.vehicle_nfc_id:
+        from app.modules.vehicles.service import VehicleService
+        vehicle_service = VehicleService(db)
+        await vehicle_service.validate_cross_nfc_uniqueness(body.vehicle_nfc_id)
+        # Sync the NFC ID to the registry mockup for consistency
+        registry_vehicle.vehicle_nfc_id = body.vehicle_nfc_id
+
     # Create VehicleOwnership
     ownership = VehicleOwnership(
         owner_type=VehicleOwnerType.COMPANY,
@@ -299,6 +308,7 @@ async def register_fleet_vehicle(
         quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
         plate_number_snapshot=registry_vehicle.plate_number,
         ktp_nfc_id_snapshot=f"COMPANY-{str(current_user.company_id)[:8]}",
+        vehicle_nfc_id=body.vehicle_nfc_id,
     )
 
     db.add(ownership)
@@ -335,6 +345,7 @@ async def register_fleet_vehicle(
         status="Aktif",
         quotaLimit=float(limit),
         quotaUsed=0.0,
+        vehicle_nfc_id=ownership.vehicle_nfc_id,
     )
 
 

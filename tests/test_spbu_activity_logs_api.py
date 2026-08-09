@@ -51,9 +51,31 @@ async def test_spbu_activity_logs_api():
     headers_spbu = {"Authorization": f"Bearer {spbu_token}"}
 
     try:
+        from datetime import timedelta
+        async with AsyncSessionLocal() as session:
+            mock_data = [
+                (SpbuActivityCategory.Keamanan, "Fraud alert ditandai untuk Plat D 9012 DEF.", 10),
+                (SpbuActivityCategory.Sistem, "Pergantian shift berhasil diverifikasi otomatis oleh AI Engine.", 25),
+                (SpbuActivityCategory.Penjualan, "Audit stok tangki solar bawah tanah selesai. Kapasitas: 85%.", 50),
+                (SpbuActivityCategory.Keamanan, "Tindakan cepat diambil terhadap Plat B 9123 KZ. Kasus diselesaikan.", 75),
+                (SpbuActivityCategory.Penjualan, "Penjualan Solar Subsidi mencapai batas kuota harian wilayah (Nozzle 03).", 165),
+                (SpbuActivityCategory.Sistem, "Sistem MySuF sinkronisasi data dengan server BPH Migas berhasil.", 240)
+            ]
+            now = datetime.utcnow()
+            for cat, detail, minutes_ago in mock_data:
+                log_entry = SpbuActivityLog(
+                    gas_station_id=station_id,
+                    category=cat,
+                    detail=detail,
+                    created_at=now - timedelta(minutes=minutes_ago)
+                )
+                session.add(log_entry)
+            await session.commit()
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            # Test 1: Fetch activity logs (should automatically seed 6 mockup items)
+            # Test 1: Fetch activity logs
             res = await ac.get("/api/v1/spbu/activity", headers=headers_spbu)
+
             assert res.status_code == 200
             data = res.json()
             assert data["total"] == 6

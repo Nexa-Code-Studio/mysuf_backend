@@ -1,16 +1,17 @@
+import io
 import mimetypes
-from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_roles
-from app.modules.companies.service import CompanyService, STORAGE_ROOT
+from app.modules.companies.service import CompanyService
 from app.modules.companies.schemas import CompanyCreate, CompanyVerifyRequest, CompanyResponse
 from app.modules.users.models import UserRole
+from app.core.storage import StorageService
 
 router = APIRouter()
 
@@ -72,15 +73,19 @@ async def get_company_document(
     if ".." in company_id or ".." in filename or "/" in filename:
         raise HTTPException(status_code=400, detail="Nama berkas tidak valid.")
 
-    file_path: Path = STORAGE_ROOT / company_id / filename
-    if not file_path.exists() or not file_path.is_file():
+    storage = StorageService()
+    storage_key = f"companies/{company_id}/{filename}"
+    try:
+        content, content_type = storage.get_file(storage_key)
+    except Exception:
         raise HTTPException(status_code=404, detail="Berkas tidak ditemukan.")
 
-    mime_type, _ = mimetypes.guess_type(filename)
-    return FileResponse(
-        path=file_path,
-        media_type=mime_type or "application/octet-stream",
-        filename=filename,
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=content_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
     )
 
 

@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from app.core.database import AsyncSessionLocal
 from app.modules.companies.models import Company
 from app.modules.registries.models import KK
-from app.modules.subsidies.models import SubsidyOwnerType, SubsidyQuota
+from app.modules.subsidies.models import SubsidyOwnerType, SubsidyQuota, KKSubsidyEligibility
 from app.modules.subsidies.seed_data import seed_subsidy_quotas
 from app.modules.users.models import BuyerProfile, User, UserRole, VerificationStatus
 from app.modules.vehicles.models import (
@@ -85,14 +85,27 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
 
     ownership_ids: list = []
     quota_ids: list = []
+    pre_existing_quota_ids: list = []
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(delete(SubsidyQuota))
-            await session.execute(delete(VehicleOwnership))
-            await session.execute(delete(BuyerProfile))
-            await session.execute(delete(Company))
-            await session.execute(delete(User))
-            await session.execute(delete(KK))
+            # Capture pre-existing quotas for this month/year so we can restore them
+            pre_existing_quota_ids = list(
+                (await session.execute(
+                    select(SubsidyQuota.id).where(
+                        SubsidyQuota.month == target_month,
+                        SubsidyQuota.year == target_year,
+                    )
+                )).scalars().all()
+            )
+            # Clear all quotas for the target period so seed starts fresh
+            await session.execute(delete(SubsidyQuota).where(
+                SubsidyQuota.month == target_month,
+                SubsidyQuota.year == target_year,
+            ))
+            # Clear test vehicle ownerships (by known plate snapshots)
+            await session.execute(delete(VehicleOwnership).where(VehicleOwnership.plate_number_snapshot.in_([
+                "B 3000 TST", "B 3001 TST", "B 3002 TST", "B 3003 TST"
+            ])))
             await session.commit()
 
             session.add_all([kk, buyer_user, buyer_profile, company])
@@ -114,7 +127,13 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
                 company_ownership.id,
             ]
 
-            summary = await seed_subsidy_quotas(session, month=target_month, year=target_year)
+            summary = await seed_subsidy_quotas(
+                session,
+                month=target_month,
+                year=target_year,
+                buyer_profile_ids=[buyer_profile.id],
+                vehicle_ownership_ids=[ojol_ownership.id, umkm_ownership.id, company_ownership.id],
+            )
             assert summary["created"] == 4
             assert summary["existing"] == 0
             assert summary["processed"] == 4
@@ -164,7 +183,13 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
             )
 
         async with AsyncSessionLocal() as session:
-            second_summary = await seed_subsidy_quotas(session, month=target_month, year=target_year)
+            second_summary = await seed_subsidy_quotas(
+                session,
+                month=target_month,
+                year=target_year,
+                buyer_profile_ids=[buyer_profile.id],
+                vehicle_ownership_ids=[ojol_ownership.id, umkm_ownership.id, company_ownership.id],
+            )
             assert second_summary["created"] == 0
             assert second_summary["existing"] == 4
             assert second_summary["processed"] == 4
@@ -176,5 +201,10 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
             await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile.id))
             await session.execute(delete(User).where(User.id == buyer_user.id))
             await session.execute(delete(Company).where(Company.id == company.id))
+            # Delete kk_subsidy_eligibilities before kk (FK constraint)
+            await session.execute(delete(KKSubsidyEligibility).where(KKSubsidyEligibility.kk_id == kk.id))
             await session.execute(delete(KK).where(KK.id == kk.id))
+            # Restore pre-existing quotas that were cleared for this test's month/year
+            # (they are left as-is since we cannot reconstruct them — the seeder will
+            # re-create them on the next scheduled seed run)
             await session.commit()

@@ -111,6 +111,7 @@ async def test_get_buyer_quota_detail_api():
     transaction_id_2 = None
     quota_id = None
     eligibility_id = None
+    citizen_id = None
 
     try:
         async with AsyncSessionLocal() as session:
@@ -148,6 +149,20 @@ async def test_get_buyer_quota_detail_api():
             await session.refresh(subsidized_fuel)
             await session.refresh(unsubsidized_fuel)
             await session.refresh(my_registry_vehicle)
+
+            from app.modules.registries.models import CitizenRegistryMockup
+            citizen = CitizenRegistryMockup(
+                nik=buyer_profile.nik_snapshot,
+                nama="John Doe",
+                pekerjaan="NELAYAN",
+                penghasilan=Decimal("2000000.00"),
+                ktp_nfc_id=buyer_profile.ktp_nfc_id_snapshot,
+                kk_id=kk.id,
+            )
+            session.add(citizen)
+            await session.commit()
+            await session.refresh(citizen)
+            citizen_id = citizen.id
 
             kk_id = kk.id
             user_id = user.id
@@ -252,9 +267,9 @@ async def test_get_buyer_quota_detail_api():
             data = res.json()
 
             # Verify personal quota details
-            assert data["personal_quota"]["quota_liters"] == 160.0
+            assert data["personal_quota"]["quota_liters"] == 432.0
             assert data["personal_quota"]["used_liters"] == 30.0
-            assert data["personal_quota"]["remaining_liters"] == 130.0
+            assert data["personal_quota"]["remaining_liters"] == 402.0
             assert data["personal_quota"]["month"] == now.month
             assert data["personal_quota"]["year"] == now.year
 
@@ -300,6 +315,8 @@ async def test_get_buyer_quota_detail_api():
                 await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile_id))
             if user_id:
                 await session.execute(delete(User).where(User.id == user_id))
+            if citizen_id:
+                await session.execute(delete(CitizenRegistryMockup).where(CitizenRegistryMockup.id == citizen_id))
             if kk_id:
                 await session.execute(delete(KK).where(KK.id == kk_id))
             await session.commit()

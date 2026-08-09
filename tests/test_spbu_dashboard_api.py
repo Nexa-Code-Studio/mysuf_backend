@@ -9,7 +9,7 @@ from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.modules.users.models import User, UserRole
 from app.modules.gas_stations.models import GasStation
-from app.modules.fuels.models import FuelType
+from app.modules.fuels.models import FuelType, FuelCategory, SubsidyType
 from app.modules.transactions.models import (
     FuelTransaction, 
     FuelTransactionStatus, 
@@ -48,8 +48,9 @@ async def test_spbu_dashboard_summary_api():
         fuel_type = FuelType(
             id=fuel_type_id,
             name="Pertalite",
+            category=FuelCategory.GASOLINE,
             price_per_liter=Decimal("10000.00"),
-            is_subsidized=True
+            subsidy_type=SubsidyType.SUBSIDIZED,
         )
         session.add(fuel_type)
         

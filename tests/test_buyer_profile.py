@@ -170,7 +170,7 @@ async def test_buyer_profile_flow():
             assert profile_data["isEligible"] is True
             assert profile_data["familyCardNumber"].startswith("KK_")
             assert profile_data["vehiclesCount"] == 0
-            assert profile_data["quotaRemaining"] == 200
+            assert profile_data["quotaRemaining"] == 540
             assert profile_data["walletBalance"] == 0
             
             # I. Update profile with invalid KK: PUT /me/buyer-profile -> 400

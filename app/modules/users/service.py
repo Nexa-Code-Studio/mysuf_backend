@@ -259,7 +259,12 @@ class UserService:
                 detail="Buyer profile not found.",
             )
 
-        has_verified_vehicle = True
+        from app.modules.vehicles.models import VehicleUsageType
+        ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(buyer_profile.ktp_nfc_id_snapshot)
+        has_verified_vehicle = any(
+            ownership.usage_type == VehicleUsageType.PERSONAL
+            for ownership in ownerships
+        )
 
         current_time = datetime.utcnow()
         personal_quota = await self._build_personal_quota_payload(
@@ -273,8 +278,8 @@ class UserService:
         payload = {
             "vehicle_verification": {
                 "has_verified_vehicle": has_verified_vehicle,
-                "show_verify_vehicle_cta": False,
-                "cta_route": "/subsidy",
+                "show_verify_vehicle_cta": not has_verified_vehicle,
+                "cta_route": "/vehicles/add",
             },
             "personal_quota": personal_quota,
             "nearby_gas_stations": self._build_nearby_gas_stations(latitude, longitude),
@@ -605,8 +610,32 @@ class UserService:
             for fuel in fuels_result.scalars().all()
         ]
 
-        # 2. Return empty vehicles list (vehicles removed)
+        # 2. Fetch vehicles and total purchase liters
+        vehicles_query = (
+            select(VehicleOwnership, VehicleRegistryMockup.brand)
+            .join(VehicleRegistryMockup, VehicleOwnership.vehicle_id == VehicleRegistryMockup.id)
+            .filter(VehicleOwnership.ktp_nfc_id_snapshot == buyer_profile.ktp_nfc_id_snapshot)
+        )
+        vehicles_result = await self.repo.db.execute(vehicles_query)
+
         vehicles_list = []
+        for ownership, brand in vehicles_result.all():
+            liters_query = (
+                select(func.coalesce(func.sum(FuelTransaction.liters), 0))
+                .filter(
+                    FuelTransaction.vehicle_ownership_id == ownership.id,
+                    FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+                )
+            )
+            liters_result = await self.repo.db.execute(liters_query)
+            total_liters = float(Decimal(liters_result.scalar()))
+
+            vehicles_list.append({
+                "id": ownership.id,
+                "plate_number": ownership.plate_number_snapshot,
+                "brand": brand,
+                "total_liters_purchased": total_liters
+            })
 
         return {
             "personal_quota": personal_quota,
