@@ -84,6 +84,7 @@ class UserProfileResponse(BaseModel):
     isPinActive: bool = False
     pekerjaan: str = "LAINNYA"
     penghasilan: float = 0.0
+    riskScore: float = 0.0
 
 class UserPinUpdate(BaseModel):
     pin: str

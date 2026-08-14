@@ -574,7 +574,8 @@ class UserService:
             "walletBalance": wallet_balance,
             "isPinActive": is_pin_active,
             "pekerjaan": pekerjaan,
-            "penghasilan": penghasilan
+            "penghasilan": penghasilan,
+            "riskScore": float(Decimal(buyer_profile.risk_score)) if buyer_profile and hasattr(buyer_profile, "risk_score") and buyer_profile.risk_score is not None else 0.0,
         }
 
     async def get_buyer_quota_detail(self, user_id: str) -> dict:
