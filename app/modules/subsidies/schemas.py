@@ -116,8 +116,8 @@ class BlacklistListResponse(BaseModel):
 class BlacklistCreateRequest(BaseModel):
     accountId: str
     holderName: str
-    plate: str
-    type: str
+    plate: Optional[str] = "-"
+    type: Optional[str] = "-"
     status: str
     reason: str
 

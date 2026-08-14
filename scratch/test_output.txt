@@ -1,0 +1,792 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/mashupsoat/Project/mysuf/mysuf_backend
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 2 items / 1 deselected / 1 selected
+
+tests/test_buyer_profile.py F                                            [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_buyer_profile_flow ____________________________
+
+    @pytest.mark.anyio
+    async def test_buyer_profile_flow():
+        # 1. Create a unique KK and User (BUYER) directly in the database
+        kk_id = uuid4()
+        buyer_id = uuid4()
+        non_buyer_id = uuid4()
+    
+        email_buyer = f"buyer_{uuid4()}@example.com"
+        email_non_buyer = f"non_buyer_{uuid4()}@example.com"
+    
+        async with AsyncSessionLocal() as session:
+            # Create KK
+            kk = KK(id=kk_id, code=f"KK_{uuid4().hex[:10]}")
+            session.add(kk)
+    
+            # Create BUYER User
+            buyer = User(
+                id=buyer_id,
+                name="Test Buyer",
+                email=email_buyer,
+                password=get_password_hash("password123"),
+                role=[UserRole.BUYER],
+                is_active=True
+            )
+            session.add(buyer)
+    
+            # Create Non-BUYER User (SUPER_ADMIN)
+            non_buyer = User(
+                id=non_buyer_id,
+                name="Test Admin",
+                email=email_non_buyer,
+                password=get_password_hash("password123"),
+                role=[UserRole.SUPER_ADMIN],
+                is_active=True
+            )
+            session.add(non_buyer)
+    
+            await session.commit()
+    
+        # Generate JWT tokens
+        buyer_token = create_access_token(
+            subject=buyer_id,
+            session_id=str(uuid4()),
+            client_type="BUYER_ANDROID",
+            roles=["BUYER"],
+            allowed_apps=["BUYER_ANDROID"]
+        )
+    
+        non_buyer_token = create_access_token(
+            subject=non_buyer_id,
+            session_id=str(uuid4()),
+            client_type="ADMIN_WEB",
+            roles=["SUPER_ADMIN"],
+            allowed_apps=["ADMIN_WEB"]
+        )
+    
+        profile_uuid = None
+        ownership_id = uuid4()
+        request_id = uuid4()
+        vehicle_id = uuid4()
+        next_nfc_id = f"NFC-{uuid4().hex[:12]}"
+    
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                buyer_headers = {"Authorization": f"Bearer {buyer_token}"}
+                non_buyer_headers = {"Authorization": f"Bearer {non_buyer_token}"}
+    
+                # A. Check before create: GET /me/buyer-profile/check (BUYER)
+                res = await ac.get("/api/v1/users/me/buyer-profile/check", headers=buyer_headers)
+                assert res.status_code == 200
+                data = res.json()
+                assert data["has_buyer_profile"] is False
+                assert data["buyer_profile_id"] is None
+                assert data["verification_status"] is None
+    
+                # B. Get before create: GET /me/buyer-profile -> 404
+                res = await ac.get("/api/v1/users/me/buyer-profile", headers=buyer_headers)
+                assert res.status_code == 404
+    
+                # B2. Get aggregated profile before buyer profile is created
+                res = await ac.get("/api/v1/users/me/profile", headers=buyer_headers)
+                assert res.status_code == 200
+                profile_data = res.json()
+                assert profile_data["name"] == "Test Buyer"
+                assert profile_data["nikMasked"] == ""
+                assert profile_data["isVerified"] is False
+                assert profile_data["isEligible"] is False
+                assert profile_data["familyCardNumber"] == ""
+                assert profile_data["vehiclesCount"] == 0
+                assert profile_data["quotaRemaining"] == 0
+                assert profile_data["walletBalance"] == 0
+    
+                # C. Update before create: PUT /me/buyer-profile -> 404
+                res = await ac.put("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={"nik_snapshot": "123"})
+                assert res.status_code == 404
+    
+                # D. Non-BUYER access attempt: POST /me/buyer-profile -> 403
+                res = await ac.post("/api/v1/users/me/buyer-profile", headers=non_buyer_headers, json={
+                    "nik_snapshot": "3201010101010001",
+                    "ktp_nfc_id_snapshot": "NFC123456",
+                    "kk_id": str(kk_id)
+                })
+                assert res.status_code == 403
+    
+                # E. Create BuyerProfile: POST /me/buyer-profile (BUYER) -> 201
+                res = await ac.post("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={
+                    "nik_snapshot": "3201010101010001",
+                    "ktp_nfc_id_snapshot": "NFC123456",
+                    "kk_id": str(kk_id)
+                })
+                assert res.status_code == 201
+                profile_data = res.json()
+                assert profile_data["nik_snapshot"] == "3201010101010001"
+                assert profile_data["ktp_nfc_id_snapshot"] == "NFC123456"
+                assert profile_data["kk_id"] == str(kk_id)
+                assert profile_data["user_id"] == str(buyer_id)
+                assert profile_data["verification_status"] == "UNVERIFIED"
+    
+                profile_uuid = profile_data["id"]
+    
+                # F. Create second time: POST /me/buyer-profile -> 400 (Duplicate)
+                res = await ac.post("/api/v1/users/me/buyer-profile", headers=buyer_headers, json={
+                    "nik_snapshot": "3201010101010001",
+                    "ktp_nfc_id_snapshot": "NFC123456",
+                    "kk_id": str(kk_id)
+                })
+                assert res.status_code == 400
+    
+                # G. Check after create: GET /me/buyer-profile/check -> True
+                res = await ac.get("/api/v1/users/me/buyer-profile/check", headers=buyer_headers)
+                assert res.status_code == 200
+                data = res.json()
+                assert data["has_buyer_profile"] is True
+                assert data["buyer_profile_id"] == profile_uuid
+                assert data["verification_status"] == "UNVERIFIED"
+    
+                # H. Get profile: GET /me/buyer-profile -> 200
+                res = await ac.get("/api/v1/users/me/buyer-profile", headers=buyer_headers)
+                assert res.status_code == 200
+                assert res.json()["nik_snapshot"] == "3201010101010001"
+    
+                # H2. Get aggregated profile after buyer profile is created
+                res = await ac.get("/api/v1/users/me/profile", headers=buyer_headers)
+                assert res.status_code == 200
+                profile_data = res.json()
+                assert profile_data["name"] == "Test Buyer"
+                assert profile_data["nikMasked"] == "3201****0001"
+                assert profile_data["isVerified"] is False
+>               assert profile_data["isEligible"] is True
+E               assert False is True
+
+tests/test_buyer_profile.py:170: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-08-12 13:54:30,371 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-08-12 13:54:30,371 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:54:30,372 INFO sqlalchemy.engine.Engine select current_schema()
+2026-08-12 13:54:30,372 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:54:30,372 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-08-12 13:54:30,372 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:54:30,373 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,374 INFO sqlalchemy.engine.Engine INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+2026-08-12 13:54:30,374 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'), 'KK_c60ff7325e')
+2026-08-12 13:54:30,376 INFO sqlalchemy.engine.Engine INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, $7::BOOLEAN, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE, $10::VARCHAR, $11::VARCHAR, $12::UUID, $13::UUID, $14::VARCHAR)
+2026-08-12 13:54:30,376 INFO sqlalchemy.engine.Engine [generated in 0.00038s] [(UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'Test Buyer', 'buyer_9a45235d-6d37-47ce-a9e0-b00a724a4255@example.com', '$2b$12$9ewVicTsuMV/yACBnx/WR.bAne4qDJNO/vd/.k..3LmjhXO8S2v1i', ['BUYER'], True, False, None, datetime.datetime(2026, 8, 12, 6, 54, 30, 376585), None, None, None, None, None), (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'), 'Test Admin', 'non_buyer_92f86da9-420a-4c38-9e56-15432c91c9fd@example.com', '$2b$12$Fgh4co3I8bMzL04aucATUOHLq0HLMhF3FxtNj2r26ofhZmzU/ub/2', ['SUPER_ADMIN'], True, False, None, datetime.datetime(2026, 8, 12, 6, 54, 30, 376587), None, None, None, None, None)]
+2026-08-12 13:54:30,384 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,405 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,407 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,407 INFO sqlalchemy.engine.Engine [generated in 0.00016s] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,409 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,409 INFO sqlalchemy.engine.Engine [generated in 0.00015s] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,412 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,412 INFO sqlalchemy.engine.Engine [generated in 0.00021s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,418 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,418 INFO sqlalchemy.engine.Engine [generated in 0.00021s] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,419 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,421 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,421 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,422 INFO sqlalchemy.engine.Engine [cached since 0.01503s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,422 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,422 INFO sqlalchemy.engine.Engine [cached since 0.01313s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,423 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,423 INFO sqlalchemy.engine.Engine [cached since 0.011s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,424 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,424 INFO sqlalchemy.engine.Engine [cached since 0.006445s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,425 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,426 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,427 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,427 INFO sqlalchemy.engine.Engine [cached since 0.02021s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,427 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,428 INFO sqlalchemy.engine.Engine [cached since 0.01831s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,428 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,429 INFO sqlalchemy.engine.Engine [cached since 0.01632s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,429 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,430 INFO sqlalchemy.engine.Engine [cached since 0.02034s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,430 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,430 INFO sqlalchemy.engine.Engine [cached since 0.01804s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,432 INFO sqlalchemy.engine.Engine SELECT wallets.id, wallets.owner_type, wallets.owner_id, wallets.balance, wallets.is_active, wallets.created_at, wallets.updated_at 
+FROM wallets 
+WHERE wallets.owner_id = $1::UUID AND wallets.owner_type = $2::owner_type_enum
+2026-08-12 13:54:30,432 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'USER')
+2026-08-12 13:54:30,436 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,436 INFO sqlalchemy.engine.Engine [generated in 0.00016s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,437 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,439 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,440 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,440 INFO sqlalchemy.engine.Engine [cached since 0.03326s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,440 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,440 INFO sqlalchemy.engine.Engine [cached since 0.03128s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,441 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,441 INFO sqlalchemy.engine.Engine [cached since 0.02911s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,442 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,442 INFO sqlalchemy.engine.Engine [cached since 0.02454s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,443 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,443 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,444 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,444 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,446 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,447 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,447 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,447 INFO sqlalchemy.engine.Engine [cached since 0.04066s ago] ('e9bf29a3-5c61-4852-98aa-b3a4f2a5cbfa',)
+2026-08-12 13:54:30,448 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,448 INFO sqlalchemy.engine.Engine [cached since 0.03873s ago] ('a3d88ff6-56a3-40e8-8438-bf864577da52',)
+2026-08-12 13:54:30,449 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,449 INFO sqlalchemy.engine.Engine [cached since 0.03653s ago] (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'),)
+2026-08-12 13:54:30,450 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,450 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,450 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,450 INFO sqlalchemy.engine.Engine [cached since 0.006378s ago] (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'),)
+2026-08-12 13:54:30,454 INFO sqlalchemy.engine.Engine INSERT INTO system_audit_logs (id, actor_id, actor_name_snapshot, actor_role_snapshot, action, ip_address, created_at) VALUES ($1::UUID, $2::UUID, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:54:30,454 INFO sqlalchemy.engine.Engine [generated in 0.00023s] (UUID('06a7c18a-6745-76bf-8000-be2ebe47a576'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'), 'Test Admin', 'Super Admin', 'Gagal (403): Menambah pengguna baru', '127.0.0.1', datetime.datetime(2026, 8, 12, 6, 54, 30, 454465))
+2026-08-12 13:54:30,455 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,473 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,474 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,474 INFO sqlalchemy.engine.Engine [cached since 0.06733s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,475 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,476 INFO sqlalchemy.engine.Engine [cached since 0.06631s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,483 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,483 INFO sqlalchemy.engine.Engine [cached since 0.07084s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,488 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,488 INFO sqlalchemy.engine.Engine [cached since 0.07877s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,489 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,489 INFO sqlalchemy.engine.Engine [cached since 0.07662s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,489 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,489 INFO sqlalchemy.engine.Engine [cached since 0.07162s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,490 INFO sqlalchemy.engine.Engine SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+2026-08-12 13:54:30,491 INFO sqlalchemy.engine.Engine [generated in 0.00010s] ('20898d9b-c2a7-4d37-a070-f6929a0c7557',)
+2026-08-12 13:54:30,492 INFO sqlalchemy.engine.Engine INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+2026-08-12 13:54:30,492 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), '3201010101010001', 'NFC123456', datetime.datetime(2026, 8, 12, 6, 54, 30, 492422), UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'), None, False, 'UNVERIFIED', 0)
+2026-08-12 13:54:30,493 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,502 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,503 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-08-12 13:54:30,503 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'),)
+2026-08-12 13:54:30,504 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,505 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,505 INFO sqlalchemy.engine.Engine [cached since 0.06059s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,505 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,505 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,507 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,507 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,507 INFO sqlalchemy.engine.Engine [cached since 0.1007s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,508 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,508 INFO sqlalchemy.engine.Engine [cached since 0.09864s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,509 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,509 INFO sqlalchemy.engine.Engine [cached since 0.09653s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,510 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,510 INFO sqlalchemy.engine.Engine [cached since 0.1006s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,510 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,510 INFO sqlalchemy.engine.Engine [cached since 0.09825s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,511 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,511 INFO sqlalchemy.engine.Engine [cached since 0.09329s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,512 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,512 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,512 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,512 INFO sqlalchemy.engine.Engine [cached since 0.06851s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,514 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,514 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,514 INFO sqlalchemy.engine.Engine [cached since 0.1074s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,514 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,515 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,515 INFO sqlalchemy.engine.Engine [cached since 0.1057s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,515 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,516 INFO sqlalchemy.engine.Engine [cached since 0.1033s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,516 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,517 INFO sqlalchemy.engine.Engine [cached since 0.09868s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,517 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,518 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,519 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,519 INFO sqlalchemy.engine.Engine [cached since 0.1123s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,520 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,520 INFO sqlalchemy.engine.Engine [cached since 0.1104s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,520 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,521 INFO sqlalchemy.engine.Engine [cached since 0.1083s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,521 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,521 INFO sqlalchemy.engine.Engine [cached since 0.1036s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,522 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,523 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,523 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:54:30,523 INFO sqlalchemy.engine.Engine [cached since 0.1168s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+2026-08-12 13:54:30,524 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,524 INFO sqlalchemy.engine.Engine [cached since 0.1147s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,525 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,525 INFO sqlalchemy.engine.Engine [cached since 0.1125s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,526 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:54:30,526 INFO sqlalchemy.engine.Engine [cached since 0.1164s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+2026-08-12 13:54:30,526 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:54:30,526 INFO sqlalchemy.engine.Engine [cached since 0.114s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,527 INFO sqlalchemy.engine.Engine SELECT wallets.id, wallets.owner_type, wallets.owner_id, wallets.balance, wallets.is_active, wallets.created_at, wallets.updated_at 
+FROM wallets 
+WHERE wallets.owner_id = $1::UUID AND wallets.owner_type = $2::owner_type_enum
+2026-08-12 13:54:30,527 INFO sqlalchemy.engine.Engine [cached since 0.09529s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'USER')
+2026-08-12 13:54:30,527 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:54:30,527 INFO sqlalchemy.engine.Engine [cached since 0.09129s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+2026-08-12 13:54:30,528 INFO sqlalchemy.engine.Engine SELECT kk.id AS kk_id, kk.code AS kk_code 
+FROM kk 
+WHERE kk.id IN ($1::UUID)
+2026-08-12 13:54:30,529 INFO sqlalchemy.engine.Engine [generated in 0.00016s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'),)
+2026-08-12 13:54:30,531 INFO sqlalchemy.engine.Engine SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+2026-08-12 13:54:30,532 INFO sqlalchemy.engine.Engine [generated in 0.00016s] ('BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), 8, 2026)
+2026-08-12 13:54:30,536 INFO sqlalchemy.engine.Engine SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+2026-08-12 13:54:30,536 INFO sqlalchemy.engine.Engine [generated in 0.00016s] ('3201010101010001',)
+2026-08-12 13:54:30,538 INFO sqlalchemy.engine.Engine SELECT subsidy_settings.id, subsidy_settings.income_threshold, subsidy_settings.default_quota_liters, subsidy_settings.occupation_bonuses 
+FROM subsidy_settings
+2026-08-12 13:54:30,538 INFO sqlalchemy.engine.Engine [generated in 0.00012s] ()
+2026-08-12 13:54:30,539 INFO sqlalchemy.engine.Engine SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+2026-08-12 13:54:30,539 INFO sqlalchemy.engine.Engine [cached since 0.007261s ago] ('BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), 8, 2026)
+2026-08-12 13:54:30,540 INFO sqlalchemy.engine.Engine INSERT INTO subsidy_quotas (id, owner_type, owner_id, subsidy_policy_id, kk_subsidy_eligibility_id, month, year, quota_liters, used_liters, is_active, created_at, updated_at) VALUES ($1::UUID, $2::subsidy_owner_type_enum, $3::UUID, $4::UUID, $5::UUID, $6::INTEGER, $7::INTEGER, $8::NUMERIC(10, 2), $9::NUMERIC(10, 2), $10::BOOLEAN, $11::TIMESTAMP WITHOUT TIME ZONE, $12::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:54:30,540 INFO sqlalchemy.engine.Engine [generated in 0.00018s] (UUID('06a7c18a-68a5-70e4-8000-33c59bf702db'), 'BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), None, None, 8, 2026, Decimal('0.00'), 0, False, datetime.datetime(2026, 8, 12, 6, 54, 30, 540311), datetime.datetime(2026, 8, 12, 6, 54, 30, 540312))
+2026-08-12 13:54:30,541 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:54:30,549 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,550 INFO sqlalchemy.engine.Engine SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.id = $1::UUID
+2026-08-12 13:54:30,550 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('06a7c18a-68a5-70e4-8000-33c59bf702db'),)
+2026-08-12 13:54:30,554 INFO sqlalchemy.engine.Engine SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+2026-08-12 13:54:30,554 INFO sqlalchemy.engine.Engine [cached since 0.01845s ago] ('3201010101010001',)
+2026-08-12 13:54:30,555 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:54:30,556 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:54:30,557 INFO sqlalchemy.engine.Engine DELETE FROM auth_sessions WHERE auth_sessions.user_id IN ($1::UUID, $2::UUID)
+2026-08-12 13:54:30,557 INFO sqlalchemy.engine.Engine [generated in 0.00015s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'))
+2026-08-12 13:54:30,558 INFO sqlalchemy.engine.Engine DELETE FROM vehicle_ownership_requests WHERE vehicle_ownership_requests.id = $1::UUID
+2026-08-12 13:54:30,558 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('fd2b87c1-1d6a-42e5-8da6-fe86915ad2b2'),)
+2026-08-12 13:54:30,559 INFO sqlalchemy.engine.Engine DELETE FROM vehicle_ownerships WHERE vehicle_ownerships.id = $1::UUID
+2026-08-12 13:54:30,559 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('c0c244df-b37e-4507-b8d8-79aecacfa293'),)
+2026-08-12 13:54:30,560 INFO sqlalchemy.engine.Engine DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+2026-08-12 13:54:30,560 INFO sqlalchemy.engine.Engine [generated in 0.00010s] ('06a7c18a-67e0-7e81-8000-aa9bb2883f28',)
+2026-08-12 13:54:30,562 INFO sqlalchemy.engine.Engine DELETE FROM users WHERE users.id IN ($1::UUID, $2::UUID)
+2026-08-12 13:54:30,562 INFO sqlalchemy.engine.Engine [generated in 0.00017s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'))
+2026-08-12 13:54:30,564 INFO sqlalchemy.engine.Engine DELETE FROM kk WHERE kk.id = $1::UUID
+2026-08-12 13:54:30,564 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'),)
+2026-08-12 13:54:30,565 INFO sqlalchemy.engine.Engine COMMIT
+------------------------------ Captured log call -------------------------------
+INFO     sqlalchemy.engine.Engine:base.py:1848 select pg_catalog.version()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 select current_schema()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 show standard_conforming_strings
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'), 'KK_c60ff7325e')
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, $7::BOOLEAN, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE, $10::VARCHAR, $11::VARCHAR, $12::UUID, $13::UUID, $14::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00038s] [(UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'Test Buyer', 'buyer_9a45235d-6d37-47ce-a9e0-b00a724a4255@example.com', '$2b$12$9ewVicTsuMV/yACBnx/WR.bAne4qDJNO/vd/.k..3LmjhXO8S2v1i', ['BUYER'], True, False, None, datetime.datetime(2026, 8, 12, 6, 54, 30, 376585), None, None, None, None, None), (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'), 'Test Admin', 'non_buyer_92f86da9-420a-4c38-9e56-15432c91c9fd@example.com', '$2b$12$Fgh4co3I8bMzL04aucATUOHLq0HLMhF3FxtNj2r26ofhZmzU/ub/2', ['SUPER_ADMIN'], True, False, None, datetime.datetime(2026, 8, 12, 6, 54, 30, 376587), None, None, None, None, None)]
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00021s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00021s] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01503s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01313s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.011s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.006445s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02021s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01831s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01632s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02034s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01804s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT wallets.id, wallets.owner_type, wallets.owner_id, wallets.balance, wallets.is_active, wallets.created_at, wallets.updated_at 
+FROM wallets 
+WHERE wallets.owner_id = $1::UUID AND wallets.owner_type = $2::owner_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'USER')
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03326s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03128s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02911s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.02454s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.04066s ago] ('e9bf29a3-5c61-4852-98aa-b3a4f2a5cbfa',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03873s ago] ('a3d88ff6-56a3-40e8-8438-bf864577da52',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.03653s ago] (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.006378s ago] (UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO system_audit_logs (id, actor_id, actor_name_snapshot, actor_role_snapshot, action, ip_address, created_at) VALUES ($1::UUID, $2::UUID, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00023s] (UUID('06a7c18a-6745-76bf-8000-be2ebe47a576'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'), 'Test Admin', 'Super Admin', 'Gagal (403): Menambah pengguna baru', '127.0.0.1', datetime.datetime(2026, 8, 12, 6, 54, 30, 454465))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06733s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06631s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.07084s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.07877s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.07662s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.07162s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] ('20898d9b-c2a7-4d37-a070-f6929a0c7557',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), '3201010101010001', 'NFC123456', datetime.datetime(2026, 8, 12, 6, 54, 30, 492422), UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'), None, False, 'UNVERIFIED', 0)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'),)
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06059s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1007s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09864s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09653s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1006s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09825s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09329s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.06851s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1074s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1057s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1033s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09868s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1123s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1104s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1083s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1036s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1168s ago] ('c11dd468-2007-4b98-9c86-606057c57fcc',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1147s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1125s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1164s ago] ('8821248a-3a50-4fef-a606-ddbc1cc85520',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.114s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT wallets.id, wallets.owner_type, wallets.owner_id, wallets.balance, wallets.is_active, wallets.created_at, wallets.updated_at 
+FROM wallets 
+WHERE wallets.owner_id = $1::UUID AND wallets.owner_type = $2::owner_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09529s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), 'USER')
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.09129s ago] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id AS kk_id, kk.code AS kk_code 
+FROM kk 
+WHERE kk.id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] ('BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), 8, 2026)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00016s] ('3201010101010001',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_settings.id, subsidy_settings.income_threshold, subsidy_settings.default_quota_liters, subsidy_settings.occupation_bonuses 
+FROM subsidy_settings
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.007261s ago] ('BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), 8, 2026)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO subsidy_quotas (id, owner_type, owner_id, subsidy_policy_id, kk_subsidy_eligibility_id, month, year, quota_liters, used_liters, is_active, created_at, updated_at) VALUES ($1::UUID, $2::subsidy_owner_type_enum, $3::UUID, $4::UUID, $5::UUID, $6::INTEGER, $7::INTEGER, $8::NUMERIC(10, 2), $9::NUMERIC(10, 2), $10::BOOLEAN, $11::TIMESTAMP WITHOUT TIME ZONE, $12::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00018s] (UUID('06a7c18a-68a5-70e4-8000-33c59bf702db'), 'BUYER_PROFILE', UUID('06a7c18a-67e0-7e81-8000-aa9bb2883f28'), None, None, 8, 2026, Decimal('0.00'), 0, False, datetime.datetime(2026, 8, 12, 6, 54, 30, 540311), datetime.datetime(2026, 8, 12, 6, 54, 30, 540312))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('06a7c18a-68a5-70e4-8000-33c59bf702db'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.01845s ago] ('3201010101010001',)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM auth_sessions WHERE auth_sessions.user_id IN ($1::UUID, $2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM vehicle_ownership_requests WHERE vehicle_ownership_requests.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('fd2b87c1-1d6a-42e5-8da6-fe86915ad2b2'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM vehicle_ownerships WHERE vehicle_ownerships.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('c0c244df-b37e-4507-b8d8-79aecacfa293'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] ('06a7c18a-67e0-7e81-8000-aa9bb2883f28',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM users WHERE users.id IN ($1::UUID, $2::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] (UUID('8821248a-3a50-4fef-a606-ddbc1cc85520'), UUID('a3d88ff6-56a3-40e8-8438-bf864577da52'))
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM kk WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('20898d9b-c2a7-4d37-a070-f6929a0c7557'),)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+=========================== short test summary info ============================
+FAILED tests/test_buyer_profile.py::test_buyer_profile_flow - assert False is...
+======================= 1 failed, 1 deselected in 1.65s ========================

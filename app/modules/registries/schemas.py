@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
+from app.modules.registries.models import VehicleClass
 
 # ----------------------------------------------------
 # Pagination Schemas
@@ -83,6 +84,8 @@ class VehicleBase(BaseModel):
     njkb: Decimal
     owner_name: Optional[str] = None
     owner_nik: Optional[str] = None
+    jenis: Optional[VehicleClass] = None
+    vehicle_nfc_id: Optional[str] = None
 
 class VehicleCreate(VehicleBase):
     pass
@@ -99,6 +102,8 @@ class VehicleUpdate(BaseModel):
     njkb: Optional[Decimal] = None
     owner_name: Optional[str] = None
     owner_nik: Optional[str] = None
+    jenis: Optional[VehicleClass] = None
+    vehicle_nfc_id: Optional[str] = None
 
 class VehicleResponse(VehicleBase):
     id: UUID

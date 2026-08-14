@@ -1,5 +1,5 @@
 [project]
-name = "mysuf_backend"
+name = "subsidia_backend"
 version = "0.1.0"
 description = "FastAPI backend modular monolith"
 readme = "README.md"

@@ -170,7 +170,15 @@ async def test_buyer_profile_flow():
             assert profile_data["isEligible"] is True
             assert profile_data["familyCardNumber"].startswith("KK_")
             assert profile_data["vehiclesCount"] == 0
-            assert profile_data["quotaRemaining"] == 540
+            async with AsyncSessionLocal() as session:
+                from app.modules.subsidies.models import SubsidySetting
+                st_res = await session.execute(select(SubsidySetting))
+                st = st_res.scalars().first()
+                expected_quota = 200
+                if st:
+                    expected_quota = int(float(st.default_quota_liters) + float(st.occupation_bonuses.get("NELAYAN", 0)))
+
+            assert profile_data["quotaRemaining"] == expected_quota
             assert profile_data["walletBalance"] == 0
             
             # I. Update profile with invalid KK: PUT /me/buyer-profile -> 400

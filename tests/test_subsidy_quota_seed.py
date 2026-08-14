@@ -9,6 +9,7 @@ from app.modules.companies.models import Company
 from app.modules.registries.models import KK
 from app.modules.subsidies.models import SubsidyOwnerType, SubsidyQuota, KKSubsidyEligibility
 from app.modules.subsidies.seed_data import seed_subsidy_quotas
+from app.modules.transactions.models import FuelTransaction
 from app.modules.users.models import BuyerProfile, User, UserRole, VerificationStatus
 from app.modules.vehicles.models import (
     VehicleOwnerType,
@@ -98,6 +99,21 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
                 )).scalars().all()
             )
             # Clear all quotas for the target period so seed starts fresh
+            # First remove any fuel_transactions referencing those quotas (FK constraint)
+            pre_quota_ids_for_delete = list(
+                (await session.execute(
+                    select(SubsidyQuota.id).where(
+                        SubsidyQuota.month == target_month,
+                        SubsidyQuota.year == target_year,
+                    )
+                )).scalars().all()
+            )
+            if pre_quota_ids_for_delete:
+                await session.execute(
+                    delete(FuelTransaction).where(
+                        FuelTransaction.subsidy_quota_id.in_(pre_quota_ids_for_delete)
+                    )
+                )
             await session.execute(delete(SubsidyQuota).where(
                 SubsidyQuota.month == target_month,
                 SubsidyQuota.year == target_year,
@@ -196,6 +212,9 @@ async def test_seed_subsidy_quotas_creates_rows_for_all_usage_types_present():
     finally:
         async with AsyncSessionLocal() as session:
             if quota_ids:
+                await session.execute(
+                    delete(FuelTransaction).where(FuelTransaction.subsidy_quota_id.in_(quota_ids))
+                )
                 await session.execute(delete(SubsidyQuota).where(SubsidyQuota.id.in_(quota_ids)))
             await session.execute(delete(VehicleOwnership).where(VehicleOwnership.id.in_(ownership_ids)))
             await session.execute(delete(BuyerProfile).where(BuyerProfile.id == buyer_profile.id))

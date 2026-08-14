@@ -26,6 +26,8 @@ from app.modules.vehicles.schemas import (
     VehicleOwnershipUpdate,
     AdminVehicleRequestResponse,
     VehicleOwnershipRequestVerify,
+    CashierPricingRequest,
+    CashierPricingResponse,
 )
 from app.modules.vehicles.service import VehicleService
 
@@ -290,3 +292,23 @@ async def verify_vehicle_request_admin(
         ip_address=ip
     )
     return result
+
+
+@router.post("/cashier/pricing", response_model=CashierPricingResponse)
+async def calculate_cashier_pricing(
+    payload: CashierPricingRequest,
+    current_user: User = Depends(require_roles([UserRole.SALES_OFFICER])),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Calculate fuel pricing preview securely on the backend (combining liters/amount inputs,
+    subsidy eligibilities, and current remaining quota).
+    """
+    service = VehicleService(db)
+    return await service.calculate_cashier_pricing(
+        nik=payload.nik,
+        fuel_type_id=payload.fuel_type_id,
+        calc_type=payload.calc_type,
+        nominal=payload.nominal,
+        plate_number=payload.plate_number,
+    )

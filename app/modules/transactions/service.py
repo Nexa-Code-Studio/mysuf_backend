@@ -323,25 +323,37 @@ class TransactionService:
         return payment_tx
 
     async def get_wallet_transactions(
-        self, user_id: UUID, page: int, size: int
+        self, user_id: UUID, page: int, size: int, filter_type: str = "all"
     ) -> dict:
         wallet = await self.wallet_service.get_or_create_user_wallet(user_id)
         buyer_profile = await self.user_repo.get_buyer_profile_by_user_id(user_id)
 
-        wallet_transactions = await self.repo.get_wallet_transactions_for_wallet(wallet.id)
-        fuel_transactions = (
-            await self.repo.get_fuel_transactions_for_buyer_profile(buyer_profile.id)
-            if buyer_profile else []
-        )
+        items = []
 
-        items = [
-            self._serialize_wallet_transaction(item)
-            for item in wallet_transactions
-        ]
-        items.extend(
-            self._serialize_fuel_transaction_for_history(item, wallet.id)
-            for item in fuel_transactions
-        )
+        if filter_type in ("all", "wallet"):
+            wallet_transactions = await self.repo.get_wallet_transactions_for_wallet(wallet.id)
+            items.extend(
+                self._serialize_wallet_transaction(item)
+                for item in wallet_transactions
+            )
+
+        if filter_type in ("all", "fuel"):
+            fuel_transactions = (
+                await self.repo.get_fuel_transactions_for_buyer_profile(buyer_profile.id)
+                if buyer_profile else []
+            )
+            if filter_type == "all":
+                items.extend(
+                    self._serialize_fuel_transaction_for_history(item, wallet.id)
+                    for item in fuel_transactions
+                    if item.wallet_transaction_id is None
+                )
+            else:
+                items.extend(
+                    self._serialize_fuel_transaction_for_history(item, wallet.id)
+                    for item in fuel_transactions
+                )
+
         items.sort(key=lambda item: (item["created_at"], str(item["id"])), reverse=True)
 
         total = len(items)
@@ -595,14 +607,20 @@ class TransactionService:
             FuelTransactionStatus.FAILED: WalletTransactionStatus.FAILED,
         }
 
+        balance_before = Decimal("0")
+        balance_after = Decimal("0")
+        if fuel_tx.wallet_transaction:
+            balance_before = fuel_tx.wallet_transaction.balance_before
+            balance_after = fuel_tx.wallet_transaction.balance_after
+
         return {
             "id": fuel_tx.id,
             "wallet_id": wallet_id,
             "type": TransactionType.FUEL_PURCHASE,
             "transaction_flow": TransactionFlow.OUT,
             "amount": fuel_tx.total_amount,
-            "balance_before": Decimal("0"),
-            "balance_after": Decimal("0"),
+            "balance_before": balance_before,
+            "balance_after": balance_after,
             "counterparty_wallet_id": None,
             "payment_transaction_id": payment_transaction.id if payment_transaction else None,
             "payment_method": fuel_tx.payment_method,
@@ -834,23 +852,22 @@ class TransactionService:
         from sqlalchemy import select
         from datetime import datetime
 
-        if vehicle_ownership is None:
-            return {
-                "detected_frauds": [],
-                "risk_score": 0,
-                "risk_level": "SAFE",
-                "action": "ALLOW TRANSACTION"
-            }
-
         detected_frauds = []
         risk_score = 0
 
         # 1. RAPID_PURCHASE & MULTI_LOCATION_ABUSE
-        # Get the most recent completed transaction for this vehicle
-        stmt_recent = select(FuelTransaction).filter(
-            FuelTransaction.vehicle_ownership_id == vehicle_ownership.id,
-            FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
-        ).order_by(FuelTransaction.created_at.desc()).limit(1)
+        # Get the most recent completed transaction for this vehicle or buyer profile
+        if vehicle_ownership is not None:
+            stmt_recent = select(FuelTransaction).filter(
+                FuelTransaction.vehicle_ownership_id == vehicle_ownership.id,
+                FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+            ).order_by(FuelTransaction.created_at.desc()).limit(1)
+        else:
+            stmt_recent = select(FuelTransaction).filter(
+                FuelTransaction.buyer_profile_id == buyer_profile.id,
+                FuelTransaction.transaction_status == FuelTransactionStatus.COMPLETED
+            ).order_by(FuelTransaction.created_at.desc()).limit(1)
+            
         res_recent = await self.db.execute(stmt_recent)
         most_recent_tx = res_recent.scalars().first()
 
@@ -861,10 +878,15 @@ class TransactionService:
             if minutes < 30.0:
                 # RAPID PURCHASE
                 risk_score += 25
+                if vehicle_ownership is not None:
+                    reason_str = f"Pembelian ulang kendaraan {vehicle_ownership.plate_number_snapshot} terjadi {int(minutes)} menit setelah transaksi sebelumnya."
+                else:
+                    reason_str = f"Pembelian ulang oleh pembeli NIK {buyer_profile.nik_snapshot} terjadi {int(minutes)} menit setelah transaksi sebelumnya."
+                
                 detected_frauds.append({
                     "type": "RAPID_PURCHASE",
                     "points": 25,
-                    "reason": f"Pembelian ulang kendaraan {vehicle_ownership.plate_number_snapshot} terjadi {int(minutes)} menit setelah transaksi sebelumnya."
+                    "reason": reason_str
                 })
 
                 # MULTI LOCATION ABUSE
@@ -879,10 +901,15 @@ class TransactionService:
                     )
                     if distance > 30.0:
                         risk_score += 40
+                        if vehicle_ownership is not None:
+                            reason_str_multi = f"Perpindahan kendaraan {vehicle_ownership.plate_number_snapshot} sejauh {distance:.1f} km dalam {int(minutes)} menit tidak realistis."
+                        else:
+                            reason_str_multi = f"Perpindahan lokasi transaksi pembeli NIK {buyer_profile.nik_snapshot} sejauh {distance:.1f} km dalam {int(minutes)} menit tidak realistis."
+                        
                         detected_frauds.append({
                             "type": "MULTI_LOCATION_ABUSE",
                             "points": 40,
-                            "reason": f"Perpindahan kendaraan {vehicle_ownership.plate_number_snapshot} sejauh {distance:.1f} km dalam {int(minutes)} menit tidak realistis."
+                            "reason": reason_str_multi
                         })
 
         # 2. HOUSEHOLD_ABUSE (Vehicle Count & Daily Volume)
@@ -905,8 +932,9 @@ class TransactionService:
             family_txs = res_family_tx.scalars().all()
 
             # Unique vehicle count
-            unique_vehicles = set(tx.vehicle_ownership_id for tx in family_txs)
-            unique_vehicles.add(vehicle_ownership.id)
+            unique_vehicles = set(tx.vehicle_ownership_id for tx in family_txs if tx.vehicle_ownership_id is not None)
+            if vehicle_ownership is not None:
+                unique_vehicles.add(vehicle_ownership.id)
             if len(unique_vehicles) > 3:
                 risk_score += 35
                 detected_frauds.append({
@@ -995,7 +1023,7 @@ class TransactionService:
             gas_station_id=current_station.id,
             buyer_profile_id=buyer_profile.id if buyer_profile else None,
             vehicle_ownership_id=vehicle_ownership.id if vehicle_ownership else None,
-            plate_number_snapshot=getattr(vehicle_ownership, "plate_number_snapshot", "N/A"),
+            plate_number_snapshot=getattr(vehicle_ownership, "plate_number_snapshot", None),
             nik_snapshot=nik_snapshot,
             risk_score=risk_score,
             risk_level=risk_level,
@@ -1009,7 +1037,7 @@ class TransactionService:
             from app.modules.spbu_activities.service import SpbuActivityService
             from app.modules.spbu_activities.models import SpbuActivityCategory
             activity_svc = SpbuActivityService(self.db)
-            plate = getattr(vehicle_ownership, "plate_number_snapshot", "N/A")
+            plate = getattr(vehicle_ownership, "plate_number_snapshot", None) or "N/A"
             await activity_svc.log_activity(
                 gas_station_id=current_station.id,
                 category=SpbuActivityCategory.Keamanan,
@@ -1271,19 +1299,7 @@ class TransactionService:
                 detail="Profil pembeli dengan NIK tersebut tidak ditemukan.",
             )
 
-        if buyer_profile.verification_status == VerificationStatus.REJECTED:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Transaksi ditolak. Akun pembeli ini telah diblokir permanen oleh sistem keamanan.",
-            )
-        if buyer_profile.verification_status == VerificationStatus.UNVERIFIED:
-            if buyer_profile.user and buyer_profile.user.frozen_until:
-                if buyer_profile.user.frozen_until <= datetime.utcnow():
-                    # Freeze duration has expired, restore verification status
-                    buyer_profile.verification_status = VerificationStatus.VERIFIED
-                    buyer_profile.risk_score = Decimal("0.00")
-                    buyer_profile.user.frozen_until = None
-                    await self.db.commit()
+
 
         wallet = None
         if require_wallet_payment:
@@ -1332,6 +1348,16 @@ class TransactionService:
                 detail="Tipe bahan bakar tidak ditemukan.",
             )
 
+        # Enforce Blocked or Frozen account check
+        if buyer_profile.verification_status == VerificationStatus.UNVERIFIED:
+            if buyer_profile.user and buyer_profile.user.frozen_until:
+                if buyer_profile.user.frozen_until <= datetime.utcnow():
+                    # Freeze duration has expired, restore status
+                    buyer_profile.verification_status = VerificationStatus.VERIFIED
+                    buyer_profile.risk_score = Decimal("0.00")
+                    buyer_profile.user.frozen_until = None
+                    await self.db.commit()
+
         fraud_assessment = await self._evaluate_fraud(
             buyer_profile=buyer_profile,
             vehicle_ownership=vehicle_ownership,
@@ -1365,56 +1391,72 @@ class TransactionService:
         market_price_per_liter = self._currency_amount(Decimal(fuel_type.price_per_liter))
         subsidized_price_per_liter = None
 
+        is_subsidized_purchase = False
         if fuel_type.subsidy_type == SubsidyType.SUBSIDIZED:
-            subsidy_service = SubsidyService(self.db)
-            now = datetime.utcnow()
-            month = now.month
-            year = now.year
-
-            if vehicle_ownership is None or vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
-                policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
-                if policy:
-                    latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
-                        kk_id=buyer_profile.kk_id,
-                        subsidy_policy_id=policy.id,
-                    )
-                    if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
-                        kk_eligibility_id = latest_eligibility.id
-                        if vehicle_ownership is None:
-                            subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
-                                buyer_profile=buyer_profile,
-                                month=month,
-                                year=year,
-                            )
-                        else:
-                            subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
-                                vehicle_ownership=vehicle_ownership,
-                                month=month,
-                                year=year,
-                                kk_subsidy_eligibility_id=kk_eligibility_id,
-                            )
-            else:
-                policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
-                if policy:
-                    subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
-                        vehicle_ownership=vehicle_ownership,
-                        month=month,
-                        year=year,
-                    )
-
-            pricing = self._build_fuel_purchase_pricing(
-                request_liters=request.liters,
-                fuel_type=fuel_type,
-                subsidy_quota=subsidy_quota,
+            # Check if buyer is eligible for subsidy: must be VERIFIED, NOT blocked and NOT frozen
+            is_buyer_blocked = (buyer_profile.verification_status == VerificationStatus.REJECTED or 
+                                (buyer_profile.user and buyer_profile.user.is_blocked))
+            is_buyer_frozen = False
+            if buyer_profile.user and buyer_profile.user.frozen_until:
+                if buyer_profile.user.frozen_until > datetime.utcnow():
+                    is_buyer_frozen = True
+            
+            is_eligible_for_subsidy = (
+                buyer_profile.verification_status == VerificationStatus.VERIFIED
+                and not is_buyer_blocked
+                and not is_buyer_frozen
             )
-            subsidized_liters = pricing["subsidized_liters"]
-            non_subsidized_liters = pricing["non_subsidized_liters"]
-            total_amount = pricing["total_amount"]
-            market_price_per_liter = pricing["market_price_per_liter"]
-            subsidized_price_per_liter = pricing["subsidized_price_per_liter"]
 
-            if subsidized_liters > 0 and subsidy_quota is not None:
-                subsidy_quota.used_liters += subsidized_liters
+            if is_eligible_for_subsidy:
+                subsidy_service = SubsidyService(self.db)
+                now = datetime.utcnow()
+                month = now.month
+                year = now.year
+
+                if vehicle_ownership is None or vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
+                    policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
+                    if policy:
+                        latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
+                            kk_id=buyer_profile.kk_id,
+                            subsidy_policy_id=policy.id,
+                        )
+                        if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
+                            kk_eligibility_id = latest_eligibility.id
+                            if vehicle_ownership is None:
+                                subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
+                                    buyer_profile=buyer_profile,
+                                    month=month,
+                                    year=year,
+                                )
+                            else:
+                                subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                                    vehicle_ownership=vehicle_ownership,
+                                    month=month,
+                                    year=year,
+                                    kk_subsidy_eligibility_id=kk_eligibility_id,
+                                )
+                else:
+                    policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
+                    if policy:
+                        subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                            vehicle_ownership=vehicle_ownership,
+                            month=month,
+                            year=year,
+                        )
+
+                pricing = self._build_fuel_purchase_pricing(
+                    request_liters=request.liters,
+                    fuel_type=fuel_type,
+                    subsidy_quota=subsidy_quota,
+                )
+                subsidized_liters = pricing["subsidized_liters"]
+                non_subsidized_liters = pricing["non_subsidized_liters"]
+                total_amount = pricing["total_amount"]
+                market_price_per_liter = pricing["market_price_per_liter"]
+                subsidized_price_per_liter = pricing["subsidized_price_per_liter"]
+
+                if subsidized_liters > 0 and subsidy_quota is not None:
+                    subsidy_quota.used_liters += subsidized_liters
 
         if require_wallet_payment and wallet.balance < total_amount:
             raise HTTPException(
@@ -2152,7 +2194,7 @@ class TransactionService:
                     { "label": "Total Transactions", "value": "0", "trend": "0%", "trendDirection": "up", "trendSubtext": "dari kemarin" },
                     { "label": "Fuel Distributed", "value": "0 L", "trendSubtext": "Hari ini" },
                     { "label": "Rejected Transactions", "value": "0", "trend": "0", "trendDirection": "up", "trendSubtext": "dari kemarin" },
-                    { "label": "High-Risk Vehicles", "value": "0", "trendSubtext": "Perlu review" }
+                    { "label": "High-Risk Users", "value": "0", "trendSubtext": "Perlu review" }
                 ],
                 "peakHours": [
                     { "hour": "00:00", "volume": 0 },
@@ -2254,21 +2296,58 @@ class TransactionService:
         ]
 
         # 6. Real-time Fraud Alerts (top 5 recent)
+        from sqlalchemy.orm import selectinload
+        from app.modules.users.models import BuyerProfile
+
         alerts_stmt = select(FraudLog).filter(
             FraudLog.gas_station_id == target_station_id
+        ).options(
+            selectinload(FraudLog.buyer_profile).selectinload(BuyerProfile.user)
         ).order_by(FraudLog.created_at.desc()).limit(5)
         alerts_res = await self.db.execute(alerts_stmt)
         alerts_list = alerts_res.scalars().all()
+
+        # Fetch citizen names and photo URLs based on NIK snapshots (prefer unmasked NIK from BuyerProfile)
+        niks = set()
+        for log in alerts_list:
+            if log.buyer_profile and log.buyer_profile.nik_snapshot:
+                niks.add(log.buyer_profile.nik_snapshot)
+            elif log.nik_snapshot and "*" not in log.nik_snapshot:
+                niks.add(log.nik_snapshot)
+
+        citizen_by_nik = {}
+        if niks:
+            from sqlalchemy.future import select
+            from app.modules.registries.models import CitizenRegistryMockup
+            result = await self.db.execute(
+                select(CitizenRegistryMockup).filter(CitizenRegistryMockup.nik.in_(niks))
+            )
+            citizens = result.scalars().all()
+            citizen_by_nik = {c.nik: c for c in citizens}
 
         fraud_alerts = []
         for log in alerts_list:
             reason = log.detected_frauds[0].get("reason", "Anomali terdeteksi") if log.detected_frauds else "Analisis anomali"
             risk_val = getattr(log.risk_level, "value", str(log.risk_level)) if log.risk_level else "UNKNOWN"
             risk_label = "HIGH RISK" if risk_val == "HIGH_RISK" else risk_val.replace("_", " ")
+
+            buyer_name = "Pengguna"
+            buyer_foto_ktp_url = None
+            
+            lookup_nik = log.buyer_profile.nik_snapshot if log.buyer_profile else log.nik_snapshot
+            if lookup_nik and lookup_nik in citizen_by_nik:
+                citizen = citizen_by_nik[lookup_nik]
+                buyer_name = citizen.nama
+                if citizen.foto_ktp:
+                    buyer_foto_ktp_url = f"/api/v1/registries/citizens/{citizen.id}/foto-ktp"
+            elif log.buyer_profile and log.buyer_profile.user:
+                buyer_name = log.buyer_profile.user.name
+
             fraud_alerts.append({
                 "time": log.created_at.strftime("%H:%M") if log.created_at else "--:--",
-                "vehicle": log.plate_number_snapshot,
+                "buyer_name": buyer_name,
                 "account": f"NIK {log.nik_snapshot[:4]}..." if log.nik_snapshot else "NIK -",
+                "buyer_foto_ktp_url": buyer_foto_ktp_url,
                 "reason": reason,
                 "risk": risk_label
             })
@@ -2294,7 +2373,7 @@ class TransactionService:
                 "trendSubtext": "dari kemarin",
             },
             {
-                "label": "High-Risk Vehicles",
+                "label": "High-Risk Users",
                 "value": f"{high_risk}",
                 "trendSubtext": "Perlu review",
             }

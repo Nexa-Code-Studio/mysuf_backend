@@ -1,0 +1,570 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/mashupsoat/Project/mysuf/mysuf_backend
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 4 items / 3 deselected / 1 selected
+
+tests/test_buyer_quota_api.py F                                          [100%]
+
+=================================== FAILURES ===================================
+_______________________ test_get_buyer_quota_detail_api ________________________
+
+    @pytest.mark.anyio
+    async def test_get_buyer_quota_detail_api():
+        now = datetime.utcnow()
+        kk = KK(code=f"KK-QUOTA-{uuid4().hex[:8]}")
+        user = User(
+            name="John Doe",
+            email=f"john-quota-{uuid4().hex[:8]}@example.com",
+            password=get_password_hash("secret123"),
+            role=[UserRole.BUYER],
+            is_active=True,
+        )
+        buyer_profile = BuyerProfile(
+            nik_snapshot=f"3171{uuid4().hex[:12]}",
+            ktp_nfc_id_snapshot=f"NFC-{uuid4().hex[:8]}",
+            kk=kk,
+            user=user,
+            verification_status=VerificationStatus.VERIFIED,
+            risk_score=Decimal("20.00"),  # trust factor = 80% (0.8)
+        )
+    
+    
+        gas_station = GasStation(
+            name="Pertalite Station",
+            latitude=-6.200000,
+            longitude=106.800000,
+        )
+    
+        subsidized_fuel = FuelType(
+            name="Pertalite",
+            octane="90",
+            category=FuelCategory.GASOLINE,
+            price_per_liter=Decimal("10000.00"),
+            subsidy_price_per_liter=Decimal("6500.00"),
+            subsidy_type=SubsidyType.SUBSIDIZED,
+        )
+    
+        unsubsidized_fuel = FuelType(
+            name="Pertamax",
+            octane="92",
+            category=FuelCategory.GASOLINE,
+            price_per_liter=Decimal("13000.00"),
+            subsidy_type=SubsidyType.NON_SUBSIDIZED,
+        )
+    
+        my_registry_vehicle = VehicleRegistryMockup(
+            plate_number="B 7777 QTA",
+            registration_number=f"STNK-QTA-{uuid4().hex[:8]}",
+            brand="Honda",
+            vehicle_type="Civic",
+            manufacture_year=2021,
+            color="Merah",
+            engine_capacity_cc=1498,
+            pkb="4500000.00",
+            njkb="280000000.00",
+            owner_name="John Doe",
+            owner_nik=buyer_profile.nik_snapshot,
+        )
+    
+        # Variables for teardown
+        kk_id = None
+        user_id = None
+        buyer_profile_id = None
+        policy_id = None
+        gas_station_id = None
+        subsidized_fuel_id = None
+        unsubsidized_fuel_id = None
+        vehicle_registry_id = None
+        ownership_id = None
+        transaction_id_1 = None
+        transaction_id_2 = None
+        quota_id = None
+        eligibility_id = None
+        citizen_id = None
+    
+        try:
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import select
+                policy_result = await session.execute(
+                    select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == VehicleUsageType.PERSONAL)
+                )
+                policy = policy_result.scalars().first()
+                created_policy = False
+                if not policy:
+                    policy = SubsidyPolicy(
+                        name="Personal Fuel Subsidy Policy",
+                        usage_type=VehicleUsageType.PERSONAL,
+                        monthly_quota_liters=Decimal("200.00"),
+                        max_allowed_njkb=Decimal("300000000.00"),
+                        is_active=True,
+                    )
+                    session.add(policy)
+                    await session.flush()
+                    created_policy = True
+                else:
+                    policy.monthly_quota_liters = Decimal("200.00")
+                    await session.flush()
+    
+                session.add_all([
+                    kk, user, buyer_profile, gas_station,
+                    subsidized_fuel, unsubsidized_fuel, my_registry_vehicle
+                ])
+                await session.commit()
+    
+                await session.refresh(kk)
+                await session.refresh(user)
+                await session.refresh(buyer_profile)
+                await session.refresh(gas_station)
+                await session.refresh(subsidized_fuel)
+                await session.refresh(unsubsidized_fuel)
+                await session.refresh(my_registry_vehicle)
+    
+                from app.modules.registries.models import CitizenRegistryMockup
+                citizen = CitizenRegistryMockup(
+                    nik=buyer_profile.nik_snapshot,
+                    nama="John Doe",
+                    pekerjaan="NELAYAN",
+                    penghasilan=Decimal("2000000.00"),
+                    ktp_nfc_id=buyer_profile.ktp_nfc_id_snapshot,
+                    kk_id=kk.id,
+                )
+                session.add(citizen)
+                await session.commit()
+                await session.refresh(citizen)
+                citizen_id = citizen.id
+    
+                kk_id = kk.id
+                user_id = user.id
+                buyer_profile_id = buyer_profile.id
+                policy_id = policy.id if created_policy else None
+                gas_station_id = gas_station.id
+                subsidized_fuel_id = subsidized_fuel.id
+                unsubsidized_fuel_id = unsubsidized_fuel.id
+                vehicle_registry_id = my_registry_vehicle.id
+    
+                # Create personal quota
+                # Risk factor: 200 * (1 - 20/100) = 160.00
+                quota = SubsidyQuota(
+                    owner_type=SubsidyOwnerType.BUYER_PROFILE,
+                    owner_id=buyer_profile.id,
+                    subsidy_policy_id=policy.id,
+                    month=now.month,
+                    year=now.year,
+                    quota_liters=Decimal("160.00"),
+                    used_liters=Decimal("30.00"),
+                    is_active=True,
+                )
+    
+                eligibility = KKSubsidyEligibility(
+                    kk_id=buyer_profile.kk_id,
+                    subsidy_policy_id=policy.id,
+                    total_njkb=Decimal("280000000.00"),
+                    eligibility_status=EligibilityStatus.ELIGIBLE,
+                    eligibility_reason="Eligible",
+                    checked_at=now,
+                )
+    
+                session.add_all([quota, eligibility])
+                await session.flush()
+                quota_id = quota.id
+                eligibility_id = eligibility.id
+    
+                # Create vehicle ownership
+                ownership = VehicleOwnership(
+                    owner_type=VehicleOwnerType.BUYER_PROFILE,
+                    owner_id=buyer_profile.id,
+                    vehicle_id=my_registry_vehicle.id,
+                    ownership_status=VehicleOwnershipStatus.PERSONAL,
+                    usage_type=VehicleUsageType.PERSONAL,
+                    quota_mode=VehicleQuotaMode.OWNER_PERSONAL_QUOTA,
+                    plate_number_snapshot=my_registry_vehicle.plate_number,
+                    ktp_nfc_id_snapshot=buyer_profile.ktp_nfc_id_snapshot,
+                )
+                session.add(ownership)
+                await session.flush()
+                ownership_id = ownership.id
+    
+                # Completed transaction for vehicle: 20 liters
+                tx1 = FuelTransaction(
+                    buyer_type=BuyerType.PERSONAL,
+                    buyer_profile_id=buyer_profile.id,
+                    vehicle_ownership_id=ownership.id,
+                    gas_station_id=gas_station.id,
+                    fuel_type_id=subsidized_fuel.id,
+                    liters=Decimal("20.00"),
+                    is_subsidized=True,
+                    total_amount=Decimal("130000.00"),
+                    payment_method=PaymentMethod.CASH,
+                    transaction_status=FuelTransactionStatus.COMPLETED,
+                    plate_number_snapshot=my_registry_vehicle.plate_number,
+                    market_price_per_liter=Decimal("10000.00"),
+                    subsidized_price_per_liter=Decimal("6500.00"),
+                )
+    
+                # Pending/Cancelled transaction for vehicle: 10 liters (should NOT be included in total)
+                tx2 = FuelTransaction(
+                    buyer_type=BuyerType.PERSONAL,
+                    buyer_profile_id=buyer_profile.id,
+                    vehicle_ownership_id=ownership.id,
+                    gas_station_id=gas_station.id,
+                    fuel_type_id=subsidized_fuel.id,
+                    liters=Decimal("10.00"),
+                    is_subsidized=True,
+                    total_amount=Decimal("65000.00"),
+                    payment_method=PaymentMethod.CASH,
+                    transaction_status=FuelTransactionStatus.CANCELLED,
+                    plate_number_snapshot=my_registry_vehicle.plate_number,
+                    market_price_per_liter=Decimal("10000.00"),
+                    subsidized_price_per_liter=Decimal("6500.00"),
+                )
+    
+                session.add_all([tx1, tx2])
+                await session.commit()
+                await session.refresh(tx1)
+                await session.refresh(tx2)
+                transaction_id_1 = tx1.id
+                transaction_id_2 = tx2.id
+    
+            # Make the API request
+            token = _build_buyer_token(str(user_id))
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                res = await ac.get(
+                    "/api/v1/users/me/quota",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert res.status_code == 200
+                data = res.json()
+    
+                # Verify personal quota details
+>               assert data["personal_quota"]["quota_liters"] == 432.0
+E               assert 160.0 == 432.0
+
+tests/test_buyer_quota_api.py:270: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-08-12 13:55:23,392 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-08-12 13:55:23,392 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:55:23,393 INFO sqlalchemy.engine.Engine select current_schema()
+2026-08-12 13:55:23,394 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:55:23,394 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-08-12 13:55:23,394 INFO sqlalchemy.engine.Engine [raw sql] ()
+2026-08-12 13:55:23,395 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,397 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-08-12 13:55:23,397 INFO sqlalchemy.engine.Engine [generated in 0.00017s] ('PERSONAL',)
+2026-08-12 13:55:23,405 INFO sqlalchemy.engine.Engine UPDATE subsidy_policies SET monthly_quota_liters=$1::NUMERIC(10, 2), updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE subsidy_policies.id = $3::UUID
+2026-08-12 13:55:23,405 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (Decimal('200.00'), datetime.datetime(2026, 8, 12, 6, 55, 23, 405704), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'))
+2026-08-12 13:55:23,408 INFO sqlalchemy.engine.Engine INSERT INTO fuel_types (id, name, octane, category, price_per_liter, subsidy_price_per_liter, subsidy_type, timestamp) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::fuel_category_enum, $5::NUMERIC(18, 2), $6::NUMERIC(18, 2), $7::subsidy_type_enum, $8::TIMESTAMP WITHOUT TIME ZONE), ($9::UUID, $10::VARCHAR, $11::VARCHAR, $12::fuel_category_enum, $13::NUMERIC(18, 2), $14::NUMERIC(18, 2), $15::subsidy_type_enum, $16::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,409 INFO sqlalchemy.engine.Engine [generated in 0.00017s (insertmanyvalues) 1/1 (unordered)] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), 'Pertalite', '90', 'GASOLINE', Decimal('10000.00'), Decimal('6500.00'), 'SUBSIDIZED', datetime.datetime(2026, 8, 12, 6, 55, 23, 408639), UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'), 'Pertamax', '92', 'GASOLINE', Decimal('13000.00'), None, 'NON_SUBSIDIZED', datetime.datetime(2026, 8, 12, 6, 55, 23, 408648))
+2026-08-12 13:55:23,413 INFO sqlalchemy.engine.Engine INSERT INTO gas_stations (id, name, longitude, latitude, timestamp) VALUES ($1::UUID, $2::VARCHAR, $3::FLOAT, $4::FLOAT, $5::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,413 INFO sqlalchemy.engine.Engine [generated in 0.00021s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'), 'Pertalite Station', 106.8, -6.2, datetime.datetime(2026, 8, 12, 6, 55, 23, 413702))
+2026-08-12 13:55:23,414 INFO sqlalchemy.engine.Engine INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+2026-08-12 13:55:23,414 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'), 'KK-QUOTA-f780cc81')
+2026-08-12 13:55:23,416 INFO sqlalchemy.engine.Engine INSERT INTO vehicle_registry_mockup (id, plate_number, registration_number, brand, vehicle_type, manufacture_year, color, engine_capacity_cc, pkb, njkb, owner_name, owner_nik, jenis, vehicle_nfc_id, created_at, updated_at) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::VARCHAR, $8::INTEGER, $9::NUMERIC(18, 2), $10::NUMERIC(18, 2), $11::VARCHAR, $12::VARCHAR, $13::vehicle_class_enum, $14::VARCHAR, $15::TIMESTAMP WITHOUT TIME ZONE, $16::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,416 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'), 'B 7777 QTA', 'STNK-QTA-dae6b5f6', 'Honda', 'Civic', 2021, 'Merah', 1498, '4500000.00', '280000000.00', 'John Doe', '31711c386480cee2', None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 416378), datetime.datetime(2026, 8, 12, 6, 55, 23, 416380))
+2026-08-12 13:55:23,420 INFO sqlalchemy.engine.Engine INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, $7::BOOLEAN, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE, $10::VARCHAR, $11::VARCHAR, $12::UUID, $13::UUID, $14::VARCHAR)
+2026-08-12 13:55:23,420 INFO sqlalchemy.engine.Engine [generated in 0.00029s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'), 'John Doe', 'john-quota-3eb46585@example.com', '$2b$12$zNJ1wD.QURuacW7ffrCRLuCN8CcdQtB0yTmUPK3CZMNdXnf2RMZ2O', ['BUYER'], True, False, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 420500), None, None, None, None, None)
+2026-08-12 13:55:23,425 INFO sqlalchemy.engine.Engine INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+2026-08-12 13:55:23,425 INFO sqlalchemy.engine.Engine [generated in 0.00023s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), '31711c386480cee2', 'NFC-66f8c2af', datetime.datetime(2026, 8, 12, 6, 55, 23, 425117), UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'), UUID('06a7c18d-b6a3-71b2-8000-005299782612'), None, False, 'VERIFIED', Decimal('20.00'))
+2026-08-12 13:55:23,428 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:55:23,442 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,443 INFO sqlalchemy.engine.Engine SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+2026-08-12 13:55:23,443 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'),)
+2026-08-12 13:55:23,445 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:55:23,445 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+2026-08-12 13:55:23,447 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+2026-08-12 13:55:23,447 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'),)
+2026-08-12 13:55:23,449 INFO sqlalchemy.engine.Engine SELECT gas_stations.id, gas_stations.name, gas_stations.longitude, gas_stations.latitude, gas_stations.timestamp 
+FROM gas_stations 
+WHERE gas_stations.id = $1::UUID
+2026-08-12 13:55:23,449 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'),)
+2026-08-12 13:55:23,451 INFO sqlalchemy.engine.Engine SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.id = $1::UUID
+2026-08-12 13:55:23,451 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'),)
+2026-08-12 13:55:23,452 INFO sqlalchemy.engine.Engine SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.id = $1::UUID
+2026-08-12 13:55:23,452 INFO sqlalchemy.engine.Engine [cached since 0.001286s ago] (UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'),)
+2026-08-12 13:55:23,453 INFO sqlalchemy.engine.Engine SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.vehicle_nfc_id, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+2026-08-12 13:55:23,453 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'),)
+2026-08-12 13:55:23,455 INFO sqlalchemy.engine.Engine INSERT INTO citizen_registry_mockup (id, nik, nama, ktp_nfc_id, kk_id, pekerjaan, penghasilan, foto_ktp) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::UUID, $6::VARCHAR, $7::NUMERIC(18, 2), $8::VARCHAR)
+2026-08-12 13:55:23,455 INFO sqlalchemy.engine.Engine [generated in 0.00017s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'), '31711c386480cee2', 'John Doe', 'NFC-66f8c2af', UUID('06a7c18d-b6a3-71b2-8000-005299782612'), 'NELAYAN', Decimal('2000000.00'), None)
+2026-08-12 13:55:23,456 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:55:23,465 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,466 INFO sqlalchemy.engine.Engine SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.id = $1::UUID
+2026-08-12 13:55:23,466 INFO sqlalchemy.engine.Engine [generated in 0.00013s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'),)
+2026-08-12 13:55:23,468 INFO sqlalchemy.engine.Engine INSERT INTO kk_subsidy_eligibilities (id, kk_id, subsidy_policy_id, total_njkb, eligibility_status, eligibility_reason, checked_at, created_at, updated_at) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::NUMERIC(18, 2), $5::eligibility_status_enum, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,468 INFO sqlalchemy.engine.Engine [generated in 0.00024s] (UUID('06a7c18d-b780-72f1-8000-5e82681602a8'), UUID('06a7c18d-b6a3-71b2-8000-005299782612'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), Decimal('280000000.00'), 'ELIGIBLE', 'Eligible', datetime.datetime(2026, 8, 12, 6, 55, 23, 58945), datetime.datetime(2026, 8, 12, 6, 55, 23, 468811), datetime.datetime(2026, 8, 12, 6, 55, 23, 468814))
+2026-08-12 13:55:23,476 INFO sqlalchemy.engine.Engine INSERT INTO subsidy_quotas (id, owner_type, owner_id, subsidy_policy_id, kk_subsidy_eligibility_id, month, year, quota_liters, used_liters, is_active, created_at, updated_at) VALUES ($1::UUID, $2::subsidy_owner_type_enum, $3::UUID, $4::UUID, $5::UUID, $6::INTEGER, $7::INTEGER, $8::NUMERIC(10, 2), $9::NUMERIC(10, 2), $10::BOOLEAN, $11::TIMESTAMP WITHOUT TIME ZONE, $12::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,476 INFO sqlalchemy.engine.Engine [generated in 0.00035s] (UUID('06a7c18d-b79e-734b-8000-d4855afb83d7'), 'BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), None, 8, 2026, Decimal('160.00'), Decimal('30.00'), True, datetime.datetime(2026, 8, 12, 6, 55, 23, 476144), datetime.datetime(2026, 8, 12, 6, 55, 23, 476147))
+2026-08-12 13:55:23,481 INFO sqlalchemy.engine.Engine INSERT INTO vehicle_ownerships (id, owner_type, owner_id, vehicle_id, ownership_status, usage_type, quota_mode, plate_number_snapshot, ktp_nfc_id_snapshot, vehicle_nfc_id, assigned_user_id, created_at, updated_at) VALUES ($1::UUID, $2::vehicle_owner_type_enum, $3::UUID, $4::UUID, $5::vehicle_ownership_status_enum, $6::vehicle_usage_type_enum, $7::vehicle_quota_mode_enum, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::TIMESTAMP WITHOUT TIME ZONE, $13::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,481 INFO sqlalchemy.engine.Engine [generated in 0.00023s] (UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), 'BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'), 'PERSONAL', 'PERSONAL', 'OWNER_PERSONAL_QUOTA', 'B 7777 QTA', 'NFC-66f8c2af', None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 481201), datetime.datetime(2026, 8, 12, 6, 55, 23, 481203))
+2026-08-12 13:55:23,486 INFO sqlalchemy.engine.Engine INSERT INTO fuel_transactions (id, buyer_type, buyer_profile_id, company_id, vehicle_ownership_id, gas_station_id, fuel_type_id, liters, subsidy_quota_id, kk_subsidy_eligibility_id, is_subsidized, subsidized_liters, non_subsidized_liters, market_pric ... 1058 characters truncated ... HAR, $49::VARCHAR, $50::VARCHAR, $51::TIMESTAMP WITHOUT TIME ZONE, $52::TIMESTAMP WITHOUT TIME ZONE)
+2026-08-12 13:55:23,486 INFO sqlalchemy.engine.Engine [generated in 0.00020s (insertmanyvalues) 1/1 (unordered)] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'), 'PERSONAL', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), None, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), UUID('06a7c18d-b69e-7768-8000-628639ff2470'), UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), Decimal('20.00'), None, None, True, 0, 0, Decimal('10000.00'), Decimal('6500.00'), Decimal('130000.00'), 'CASH', None, 'COMPLETED', None, 'B 7777 QTA', None, None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 486690), datetime.datetime(2026, 8, 12, 6, 55, 23, 486693), UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'), 'PERSONAL', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), None, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), UUID('06a7c18d-b69e-7768-8000-628639ff2470'), UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), Decimal('10.00'), None, None, True, 0, 0, Decimal('10000.00'), Decimal('6500.00'), Decimal('65000.00'), 'CASH', None, 'CANCELLED', None, 'B 7777 QTA', None, None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 486697), datetime.datetime(2026, 8, 12, 6, 55, 23, 486698))
+2026-08-12 13:55:23,491 INFO sqlalchemy.engine.Engine COMMIT
+2026-08-12 13:55:23,499 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,501 INFO sqlalchemy.engine.Engine SELECT fuel_transactions.id, fuel_transactions.buyer_type, fuel_transactions.buyer_profile_id, fuel_transactions.company_id, fuel_transactions.vehicle_ownership_id, fuel_transactions.gas_station_id, fuel_transactions.fuel_type_id, fuel_transactions.liters, fuel_transactions.subsidy_quota_id, fuel_transactions.kk_subsidy_eligibility_id, fuel_transactions.is_subsidized, fuel_transactions.subsidized_liters, fuel_transactions.non_subsidized_liters, fuel_transactions.market_price_per_liter, fuel_transactions.subsidized_price_per_liter, fuel_transactions.total_amount, fuel_transactions.payment_method, fuel_transactions.wallet_transaction_id, fuel_transactions.transaction_status, fuel_transactions.verified_by_user_id, fuel_transactions.plate_number_snapshot, fuel_transactions.nik_snapshot, fuel_transactions.company_name_snapshot, fuel_transactions.vehicle_nfc_id_snapshot, fuel_transactions.created_at, fuel_transactions.updated_at 
+FROM fuel_transactions 
+WHERE fuel_transactions.id = $1::UUID
+2026-08-12 13:55:23,501 INFO sqlalchemy.engine.Engine [generated in 0.00015s] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'),)
+2026-08-12 13:55:23,502 INFO sqlalchemy.engine.Engine SELECT fuel_transactions.id, fuel_transactions.buyer_type, fuel_transactions.buyer_profile_id, fuel_transactions.company_id, fuel_transactions.vehicle_ownership_id, fuel_transactions.gas_station_id, fuel_transactions.fuel_type_id, fuel_transactions.liters, fuel_transactions.subsidy_quota_id, fuel_transactions.kk_subsidy_eligibility_id, fuel_transactions.is_subsidized, fuel_transactions.subsidized_liters, fuel_transactions.non_subsidized_liters, fuel_transactions.market_price_per_liter, fuel_transactions.subsidized_price_per_liter, fuel_transactions.total_amount, fuel_transactions.payment_method, fuel_transactions.wallet_transaction_id, fuel_transactions.transaction_status, fuel_transactions.verified_by_user_id, fuel_transactions.plate_number_snapshot, fuel_transactions.nik_snapshot, fuel_transactions.company_name_snapshot, fuel_transactions.vehicle_nfc_id_snapshot, fuel_transactions.created_at, fuel_transactions.updated_at 
+FROM fuel_transactions 
+WHERE fuel_transactions.id = $1::UUID
+2026-08-12 13:55:23,502 INFO sqlalchemy.engine.Engine [cached since 0.001798s ago] (UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'),)
+2026-08-12 13:55:23,503 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:55:23,510 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,510 INFO sqlalchemy.engine.Engine SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+2026-08-12 13:55:23,511 INFO sqlalchemy.engine.Engine [generated in 0.00015s] ('9e021f98-9619-4638-9400-c0513674d193',)
+2026-08-12 13:55:23,513 INFO sqlalchemy.engine.Engine SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+2026-08-12 13:55:23,513 INFO sqlalchemy.engine.Engine [generated in 0.00014s] ('06a7c18d-b6ba-74eb-8000-acfe33f7ec04',)
+2026-08-12 13:55:23,515 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+2026-08-12 13:55:23,515 INFO sqlalchemy.engine.Engine [generated in 0.00019s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+2026-08-12 13:55:23,517 INFO sqlalchemy.engine.Engine SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+2026-08-12 13:55:23,517 INFO sqlalchemy.engine.Engine [generated in 0.00024s] ('06a7c18d-b6ba-74eb-8000-acfe33f7ec04',)
+2026-08-12 13:55:23,519 INFO sqlalchemy.engine.Engine SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+2026-08-12 13:55:23,519 INFO sqlalchemy.engine.Engine [cached since 0.1221s ago] ('PERSONAL',)
+2026-08-12 13:55:23,520 INFO sqlalchemy.engine.Engine SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+2026-08-12 13:55:23,520 INFO sqlalchemy.engine.Engine [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), 1)
+2026-08-12 13:55:23,522 INFO sqlalchemy.engine.Engine SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+2026-08-12 13:55:23,522 INFO sqlalchemy.engine.Engine [generated in 0.00019s] ('31711c386480cee2',)
+2026-08-12 13:55:23,524 INFO sqlalchemy.engine.Engine SELECT subsidy_settings.id, subsidy_settings.income_threshold, subsidy_settings.default_quota_liters, subsidy_settings.occupation_bonuses 
+FROM subsidy_settings
+2026-08-12 13:55:23,524 INFO sqlalchemy.engine.Engine [generated in 0.00014s] ()
+2026-08-12 13:55:23,526 INFO sqlalchemy.engine.Engine SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+2026-08-12 13:55:23,526 INFO sqlalchemy.engine.Engine [generated in 0.00020s] ('BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), 8, 2026)
+2026-08-12 13:55:23,527 INFO sqlalchemy.engine.Engine SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.subsidy_type = $1::subsidy_type_enum
+2026-08-12 13:55:23,527 INFO sqlalchemy.engine.Engine [generated in 0.00014s] ('SUBSIDIZED',)
+2026-08-12 13:55:23,529 INFO sqlalchemy.engine.Engine SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.vehicle_nfc_id, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at, vehicle_registry_mockup.brand 
+FROM vehicle_ownerships JOIN vehicle_registry_mockup ON vehicle_ownerships.vehicle_id = vehicle_registry_mockup.id 
+WHERE vehicle_ownerships.ktp_nfc_id_snapshot = $1::VARCHAR
+2026-08-12 13:55:23,529 INFO sqlalchemy.engine.Engine [generated in 0.00013s] ('NFC-66f8c2af',)
+2026-08-12 13:55:23,532 INFO sqlalchemy.engine.Engine SELECT coalesce(sum(fuel_transactions.liters), $1::INTEGER) AS coalesce_1 
+FROM fuel_transactions 
+WHERE fuel_transactions.vehicle_ownership_id = $2::UUID AND fuel_transactions.transaction_status = $3::fuel_transaction_status_enum
+2026-08-12 13:55:23,532 INFO sqlalchemy.engine.Engine [generated in 0.00015s] (0, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), 'COMPLETED')
+2026-08-12 13:55:23,533 INFO sqlalchemy.engine.Engine ROLLBACK
+2026-08-12 13:55:23,534 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-08-12 13:55:23,535 INFO sqlalchemy.engine.Engine DELETE FROM fuel_transactions WHERE fuel_transactions.id = $1::UUID
+2026-08-12 13:55:23,535 INFO sqlalchemy.engine.Engine [generated in 0.00012s] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'),)
+2026-08-12 13:55:23,537 INFO sqlalchemy.engine.Engine DELETE FROM fuel_transactions WHERE fuel_transactions.id = $1::UUID
+2026-08-12 13:55:23,537 INFO sqlalchemy.engine.Engine [cached since 0.001857s ago] (UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'),)
+2026-08-12 13:55:23,537 INFO sqlalchemy.engine.Engine DELETE FROM vehicle_ownerships WHERE vehicle_ownerships.id = $1::UUID
+2026-08-12 13:55:23,538 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'),)
+2026-08-12 13:55:23,539 INFO sqlalchemy.engine.Engine DELETE FROM subsidy_quotas WHERE subsidy_quotas.id = $1::UUID
+2026-08-12 13:55:23,539 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a7c18d-b79e-734b-8000-d4855afb83d7'),)
+2026-08-12 13:55:23,540 INFO sqlalchemy.engine.Engine DELETE FROM kk_subsidy_eligibilities WHERE kk_subsidy_eligibilities.id = $1::UUID
+2026-08-12 13:55:23,540 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('06a7c18d-b780-72f1-8000-5e82681602a8'),)
+2026-08-12 13:55:23,541 INFO sqlalchemy.engine.Engine DELETE FROM vehicle_registry_mockup WHERE vehicle_registry_mockup.id = $1::UUID
+2026-08-12 13:55:23,541 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'),)
+2026-08-12 13:55:23,542 INFO sqlalchemy.engine.Engine DELETE FROM fuel_types WHERE fuel_types.id = $1::UUID
+2026-08-12 13:55:23,542 INFO sqlalchemy.engine.Engine [generated in 0.00009s] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'),)
+2026-08-12 13:55:23,542 INFO sqlalchemy.engine.Engine DELETE FROM fuel_types WHERE fuel_types.id = $1::UUID
+2026-08-12 13:55:23,542 INFO sqlalchemy.engine.Engine [cached since 0.0007902s ago] (UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'),)
+2026-08-12 13:55:23,543 INFO sqlalchemy.engine.Engine DELETE FROM gas_stations WHERE gas_stations.id = $1::UUID
+2026-08-12 13:55:23,543 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'),)
+2026-08-12 13:55:23,545 INFO sqlalchemy.engine.Engine DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+2026-08-12 13:55:23,545 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'),)
+2026-08-12 13:55:23,546 INFO sqlalchemy.engine.Engine DELETE FROM users WHERE users.id = $1::UUID
+2026-08-12 13:55:23,546 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+2026-08-12 13:55:23,548 INFO sqlalchemy.engine.Engine DELETE FROM citizen_registry_mockup WHERE citizen_registry_mockup.id = $1::UUID
+2026-08-12 13:55:23,548 INFO sqlalchemy.engine.Engine [generated in 0.00011s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'),)
+2026-08-12 13:55:23,549 INFO sqlalchemy.engine.Engine DELETE FROM kk WHERE kk.id = $1::UUID
+2026-08-12 13:55:23,549 INFO sqlalchemy.engine.Engine [generated in 0.00010s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'),)
+2026-08-12 13:55:23,549 INFO sqlalchemy.engine.Engine COMMIT
+------------------------------ Captured log call -------------------------------
+INFO     sqlalchemy.engine.Engine:base.py:1848 select pg_catalog.version()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 select current_schema()
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 show standard_conforming_strings
+INFO     sqlalchemy.engine.Engine:base.py:1848 [raw sql] ()
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 UPDATE subsidy_policies SET monthly_quota_liters=$1::NUMERIC(10, 2), updated_at=$2::TIMESTAMP WITHOUT TIME ZONE WHERE subsidy_policies.id = $3::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (Decimal('200.00'), datetime.datetime(2026, 8, 12, 6, 55, 23, 405704), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'))
+INFO     sqlalchemy.engine.Engine:base.py:1846 INSERT INTO fuel_types (id, name, octane, category, price_per_liter, subsidy_price_per_liter, subsidy_type, timestamp) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::fuel_category_enum, $5::NUMERIC(18, 2), $6::NUMERIC(18, 2), $7::subsidy_type_enum, $8::TIMESTAMP WITHOUT TIME ZONE), ($9::UUID, $10::VARCHAR, $11::VARCHAR, $12::fuel_category_enum, $13::NUMERIC(18, 2), $14::NUMERIC(18, 2), $15::subsidy_type_enum, $16::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1846 [generated in 0.00017s (insertmanyvalues) 1/1 (unordered)] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), 'Pertalite', '90', 'GASOLINE', Decimal('10000.00'), Decimal('6500.00'), 'SUBSIDIZED', datetime.datetime(2026, 8, 12, 6, 55, 23, 408639), UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'), 'Pertamax', '92', 'GASOLINE', Decimal('13000.00'), None, 'NON_SUBSIDIZED', datetime.datetime(2026, 8, 12, 6, 55, 23, 408648))
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO gas_stations (id, name, longitude, latitude, timestamp) VALUES ($1::UUID, $2::VARCHAR, $3::FLOAT, $4::FLOAT, $5::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00021s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'), 'Pertalite Station', 106.8, -6.2, datetime.datetime(2026, 8, 12, 6, 55, 23, 413702))
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO kk (id, code) VALUES ($1::UUID, $2::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'), 'KK-QUOTA-f780cc81')
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO vehicle_registry_mockup (id, plate_number, registration_number, brand, vehicle_type, manufacture_year, color, engine_capacity_cc, pkb, njkb, owner_name, owner_nik, jenis, vehicle_nfc_id, created_at, updated_at) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::INTEGER, $7::VARCHAR, $8::INTEGER, $9::NUMERIC(18, 2), $10::NUMERIC(18, 2), $11::VARCHAR, $12::VARCHAR, $13::vehicle_class_enum, $14::VARCHAR, $15::TIMESTAMP WITHOUT TIME ZONE, $16::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'), 'B 7777 QTA', 'STNK-QTA-dae6b5f6', 'Honda', 'Civic', 2021, 'Merah', 1498, '4500000.00', '280000000.00', 'John Doe', '31711c386480cee2', None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 416378), datetime.datetime(2026, 8, 12, 6, 55, 23, 416380))
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO users (id, name, email, password, role, is_active, is_blocked, frozen_until, timestamp, employee_id, fcm_token, gas_station_id, company_id, shift) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::user_role_enum[], $6::BOOLEAN, $7::BOOLEAN, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE, $10::VARCHAR, $11::VARCHAR, $12::UUID, $13::UUID, $14::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00029s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'), 'John Doe', 'john-quota-3eb46585@example.com', '$2b$12$zNJ1wD.QURuacW7ffrCRLuCN8CcdQtB0yTmUPK3CZMNdXnf2RMZ2O', ['BUYER'], True, False, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 420500), None, None, None, None, None)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO buyer_profiles (id, nik_snapshot, ktp_nfc_id_snapshot, timestamp, user_id, kk_id, pin_hash, is_pin_active, verification_status, risk_score) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::TIMESTAMP WITHOUT TIME ZONE, $5::UUID, $6::UUID, $7::VARCHAR, $8::BOOLEAN, $9::verification_status_enum, $10::NUMERIC(5, 2))
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00023s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), '31711c386480cee2', 'NFC-66f8c2af', datetime.datetime(2026, 8, 12, 6, 55, 23, 425117), UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'), UUID('06a7c18d-b6a3-71b2-8000-005299782612'), None, False, 'VERIFIED', Decimal('20.00'))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk.id, kk.code 
+FROM kk 
+WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT gas_stations.id, gas_stations.name, gas_stations.longitude, gas_stations.latitude, gas_stations.timestamp 
+FROM gas_stations 
+WHERE gas_stations.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.001286s ago] (UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_registry_mockup.id, vehicle_registry_mockup.plate_number, vehicle_registry_mockup.registration_number, vehicle_registry_mockup.brand, vehicle_registry_mockup.vehicle_type, vehicle_registry_mockup.manufacture_year, vehicle_registry_mockup.color, vehicle_registry_mockup.engine_capacity_cc, vehicle_registry_mockup.pkb, vehicle_registry_mockup.njkb, vehicle_registry_mockup.owner_name, vehicle_registry_mockup.owner_nik, vehicle_registry_mockup.jenis, vehicle_registry_mockup.vehicle_nfc_id, vehicle_registry_mockup.created_at, vehicle_registry_mockup.updated_at 
+FROM vehicle_registry_mockup 
+WHERE vehicle_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO citizen_registry_mockup (id, nik, nama, ktp_nfc_id, kk_id, pekerjaan, penghasilan, foto_ktp) VALUES ($1::UUID, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::UUID, $6::VARCHAR, $7::NUMERIC(18, 2), $8::VARCHAR)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00017s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'), '31711c386480cee2', 'John Doe', 'NFC-66f8c2af', UUID('06a7c18d-b6a3-71b2-8000-005299782612'), 'NELAYAN', Decimal('2000000.00'), None)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO kk_subsidy_eligibilities (id, kk_id, subsidy_policy_id, total_njkb, eligibility_status, eligibility_reason, checked_at, created_at, updated_at) VALUES ($1::UUID, $2::UUID, $3::UUID, $4::NUMERIC(18, 2), $5::eligibility_status_enum, $6::VARCHAR, $7::TIMESTAMP WITHOUT TIME ZONE, $8::TIMESTAMP WITHOUT TIME ZONE, $9::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00024s] (UUID('06a7c18d-b780-72f1-8000-5e82681602a8'), UUID('06a7c18d-b6a3-71b2-8000-005299782612'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), Decimal('280000000.00'), 'ELIGIBLE', 'Eligible', datetime.datetime(2026, 8, 12, 6, 55, 23, 58945), datetime.datetime(2026, 8, 12, 6, 55, 23, 468811), datetime.datetime(2026, 8, 12, 6, 55, 23, 468814))
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO subsidy_quotas (id, owner_type, owner_id, subsidy_policy_id, kk_subsidy_eligibility_id, month, year, quota_liters, used_liters, is_active, created_at, updated_at) VALUES ($1::UUID, $2::subsidy_owner_type_enum, $3::UUID, $4::UUID, $5::UUID, $6::INTEGER, $7::INTEGER, $8::NUMERIC(10, 2), $9::NUMERIC(10, 2), $10::BOOLEAN, $11::TIMESTAMP WITHOUT TIME ZONE, $12::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00035s] (UUID('06a7c18d-b79e-734b-8000-d4855afb83d7'), 'BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), None, 8, 2026, Decimal('160.00'), Decimal('30.00'), True, datetime.datetime(2026, 8, 12, 6, 55, 23, 476144), datetime.datetime(2026, 8, 12, 6, 55, 23, 476147))
+INFO     sqlalchemy.engine.Engine:base.py:1848 INSERT INTO vehicle_ownerships (id, owner_type, owner_id, vehicle_id, ownership_status, usage_type, quota_mode, plate_number_snapshot, ktp_nfc_id_snapshot, vehicle_nfc_id, assigned_user_id, created_at, updated_at) VALUES ($1::UUID, $2::vehicle_owner_type_enum, $3::UUID, $4::UUID, $5::vehicle_ownership_status_enum, $6::vehicle_usage_type_enum, $7::vehicle_quota_mode_enum, $8::VARCHAR, $9::VARCHAR, $10::VARCHAR, $11::UUID, $12::TIMESTAMP WITHOUT TIME ZONE, $13::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00023s] (UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), 'BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'), 'PERSONAL', 'PERSONAL', 'OWNER_PERSONAL_QUOTA', 'B 7777 QTA', 'NFC-66f8c2af', None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 481201), datetime.datetime(2026, 8, 12, 6, 55, 23, 481203))
+INFO     sqlalchemy.engine.Engine:base.py:1846 INSERT INTO fuel_transactions (id, buyer_type, buyer_profile_id, company_id, vehicle_ownership_id, gas_station_id, fuel_type_id, liters, subsidy_quota_id, kk_subsidy_eligibility_id, is_subsidized, subsidized_liters, non_subsidized_liters, market_pric ... 1058 characters truncated ... HAR, $49::VARCHAR, $50::VARCHAR, $51::TIMESTAMP WITHOUT TIME ZONE, $52::TIMESTAMP WITHOUT TIME ZONE)
+INFO     sqlalchemy.engine.Engine:base.py:1846 [generated in 0.00020s (insertmanyvalues) 1/1 (unordered)] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'), 'PERSONAL', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), None, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), UUID('06a7c18d-b69e-7768-8000-628639ff2470'), UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), Decimal('20.00'), None, None, True, 0, 0, Decimal('10000.00'), Decimal('6500.00'), Decimal('130000.00'), 'CASH', None, 'COMPLETED', None, 'B 7777 QTA', None, None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 486690), datetime.datetime(2026, 8, 12, 6, 55, 23, 486693), UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'), 'PERSONAL', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), None, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), UUID('06a7c18d-b69e-7768-8000-628639ff2470'), UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'), Decimal('10.00'), None, None, True, 0, 0, Decimal('10000.00'), Decimal('6500.00'), Decimal('65000.00'), 'CASH', None, 'CANCELLED', None, 'B 7777 QTA', None, None, None, datetime.datetime(2026, 8, 12, 6, 55, 23, 486697), datetime.datetime(2026, 8, 12, 6, 55, 23, 486698))
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT fuel_transactions.id, fuel_transactions.buyer_type, fuel_transactions.buyer_profile_id, fuel_transactions.company_id, fuel_transactions.vehicle_ownership_id, fuel_transactions.gas_station_id, fuel_transactions.fuel_type_id, fuel_transactions.liters, fuel_transactions.subsidy_quota_id, fuel_transactions.kk_subsidy_eligibility_id, fuel_transactions.is_subsidized, fuel_transactions.subsidized_liters, fuel_transactions.non_subsidized_liters, fuel_transactions.market_price_per_liter, fuel_transactions.subsidized_price_per_liter, fuel_transactions.total_amount, fuel_transactions.payment_method, fuel_transactions.wallet_transaction_id, fuel_transactions.transaction_status, fuel_transactions.verified_by_user_id, fuel_transactions.plate_number_snapshot, fuel_transactions.nik_snapshot, fuel_transactions.company_name_snapshot, fuel_transactions.vehicle_nfc_id_snapshot, fuel_transactions.created_at, fuel_transactions.updated_at 
+FROM fuel_transactions 
+WHERE fuel_transactions.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT fuel_transactions.id, fuel_transactions.buyer_type, fuel_transactions.buyer_profile_id, fuel_transactions.company_id, fuel_transactions.vehicle_ownership_id, fuel_transactions.gas_station_id, fuel_transactions.fuel_type_id, fuel_transactions.liters, fuel_transactions.subsidy_quota_id, fuel_transactions.kk_subsidy_eligibility_id, fuel_transactions.is_subsidized, fuel_transactions.subsidized_liters, fuel_transactions.non_subsidized_liters, fuel_transactions.market_price_per_liter, fuel_transactions.subsidized_price_per_liter, fuel_transactions.total_amount, fuel_transactions.payment_method, fuel_transactions.wallet_transaction_id, fuel_transactions.transaction_status, fuel_transactions.verified_by_user_id, fuel_transactions.plate_number_snapshot, fuel_transactions.nik_snapshot, fuel_transactions.company_name_snapshot, fuel_transactions.vehicle_nfc_id_snapshot, fuel_transactions.created_at, fuel_transactions.updated_at 
+FROM fuel_transactions 
+WHERE fuel_transactions.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.001798s ago] (UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'),)
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT auth_sessions.session_id, auth_sessions.user_id, auth_sessions.client_type, auth_sessions.issued_at, auth_sessions.expires_at, auth_sessions.revoked_at 
+FROM auth_sessions 
+WHERE auth_sessions.session_id = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] ('9e021f98-9619-4638-9400-c0513674d193',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT users.id, users.name, users.email, users.password, users.role, users.is_active, users.is_blocked, users.frozen_until, users.timestamp, users.employee_id, users.fcm_token, users.gas_station_id, users.company_id, users.shift 
+FROM users 
+WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] ('06a7c18d-b6ba-74eb-8000-acfe33f7ec04',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.user_id AS buyer_profiles_user_id, buyer_profiles.id AS buyer_profiles_id, buyer_profiles.nik_snapshot AS buyer_profiles_nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot AS buyer_profiles_ktp_nfc_id_snapshot, buyer_profiles.timestamp AS buyer_profiles_timestamp, buyer_profiles.kk_id AS buyer_profiles_kk_id, buyer_profiles.pin_hash AS buyer_profiles_pin_hash, buyer_profiles.is_pin_active AS buyer_profiles_is_pin_active, buyer_profiles.verification_status AS buyer_profiles_verification_status, buyer_profiles.risk_score AS buyer_profiles_risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id IN ($1::UUID)
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT buyer_profiles.id, buyer_profiles.nik_snapshot, buyer_profiles.ktp_nfc_id_snapshot, buyer_profiles.timestamp, buyer_profiles.user_id, buyer_profiles.kk_id, buyer_profiles.pin_hash, buyer_profiles.is_pin_active, buyer_profiles.verification_status, buyer_profiles.risk_score 
+FROM buyer_profiles 
+WHERE buyer_profiles.user_id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00024s] ('06a7c18d-b6ba-74eb-8000-acfe33f7ec04',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_policies.id, subsidy_policies.name, subsidy_policies.usage_type, subsidy_policies.monthly_quota_liters, subsidy_policies.max_allowed_njkb, subsidy_policies.is_active, subsidy_policies.created_at, subsidy_policies.updated_at 
+FROM subsidy_policies 
+WHERE subsidy_policies.usage_type = $1::vehicle_usage_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.1221s ago] ('PERSONAL',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT kk_subsidy_eligibilities.id, kk_subsidy_eligibilities.kk_id, kk_subsidy_eligibilities.subsidy_policy_id, kk_subsidy_eligibilities.total_njkb, kk_subsidy_eligibilities.eligibility_status, kk_subsidy_eligibilities.eligibility_reason, kk_subsidy_eligibilities.checked_at, kk_subsidy_eligibilities.created_at, kk_subsidy_eligibilities.updated_at 
+FROM kk_subsidy_eligibilities 
+WHERE kk_subsidy_eligibilities.kk_id = $1::UUID AND kk_subsidy_eligibilities.subsidy_policy_id = $2::UUID ORDER BY kk_subsidy_eligibilities.checked_at DESC NULLS LAST, kk_subsidy_eligibilities.updated_at DESC, kk_subsidy_eligibilities.id DESC 
+ LIMIT $3::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'), UUID('06a7c187-b232-7d68-8000-209342b8f0e4'), 1)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT citizen_registry_mockup.id, citizen_registry_mockup.nik, citizen_registry_mockup.nama, citizen_registry_mockup.ktp_nfc_id, citizen_registry_mockup.kk_id, citizen_registry_mockup.pekerjaan, citizen_registry_mockup.penghasilan, citizen_registry_mockup.foto_ktp 
+FROM citizen_registry_mockup 
+WHERE citizen_registry_mockup.nik = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00019s] ('31711c386480cee2',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_settings.id, subsidy_settings.income_threshold, subsidy_settings.default_quota_liters, subsidy_settings.occupation_bonuses 
+FROM subsidy_settings
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] ()
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT subsidy_quotas.id, subsidy_quotas.owner_type, subsidy_quotas.owner_id, subsidy_quotas.subsidy_policy_id, subsidy_quotas.kk_subsidy_eligibility_id, subsidy_quotas.month, subsidy_quotas.year, subsidy_quotas.quota_liters, subsidy_quotas.used_liters, subsidy_quotas.is_active, subsidy_quotas.created_at, subsidy_quotas.updated_at 
+FROM subsidy_quotas 
+WHERE subsidy_quotas.owner_type = $1::subsidy_owner_type_enum AND subsidy_quotas.owner_id = $2::UUID AND subsidy_quotas.month = $3::INTEGER AND subsidy_quotas.year = $4::INTEGER
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00020s] ('BUYER_PROFILE', UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'), 8, 2026)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT fuel_types.id, fuel_types.name, fuel_types.octane, fuel_types.category, fuel_types.price_per_liter, fuel_types.subsidy_price_per_liter, fuel_types.subsidy_type, fuel_types.timestamp 
+FROM fuel_types 
+WHERE fuel_types.subsidy_type = $1::subsidy_type_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00014s] ('SUBSIDIZED',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT vehicle_ownerships.id, vehicle_ownerships.owner_type, vehicle_ownerships.owner_id, vehicle_ownerships.vehicle_id, vehicle_ownerships.ownership_status, vehicle_ownerships.usage_type, vehicle_ownerships.quota_mode, vehicle_ownerships.plate_number_snapshot, vehicle_ownerships.ktp_nfc_id_snapshot, vehicle_ownerships.vehicle_nfc_id, vehicle_ownerships.assigned_user_id, vehicle_ownerships.created_at, vehicle_ownerships.updated_at, vehicle_registry_mockup.brand 
+FROM vehicle_ownerships JOIN vehicle_registry_mockup ON vehicle_ownerships.vehicle_id = vehicle_registry_mockup.id 
+WHERE vehicle_ownerships.ktp_nfc_id_snapshot = $1::VARCHAR
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00013s] ('NFC-66f8c2af',)
+INFO     sqlalchemy.engine.Engine:base.py:1848 SELECT coalesce(sum(fuel_transactions.liters), $1::INTEGER) AS coalesce_1 
+FROM fuel_transactions 
+WHERE fuel_transactions.vehicle_ownership_id = $2::UUID AND fuel_transactions.transaction_status = $3::fuel_transaction_status_enum
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00015s] (0, UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'), 'COMPLETED')
+INFO     sqlalchemy.engine.Engine:base.py:2715 ROLLBACK
+INFO     sqlalchemy.engine.Engine:base.py:2712 BEGIN (implicit)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM fuel_transactions WHERE fuel_transactions.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00012s] (UUID('06a7c18d-b7c9-76d0-8000-34c354648963'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM fuel_transactions WHERE fuel_transactions.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.001857s ago] (UUID('06a7c18d-b7c9-77fa-8000-7bbb05a0c75a'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM vehicle_ownerships WHERE vehicle_ownerships.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('06a7c18d-b7b2-7f03-8000-c72d585afd4a'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM subsidy_quotas WHERE subsidy_quotas.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a7c18d-b79e-734b-8000-d4855afb83d7'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM kk_subsidy_eligibilities WHERE kk_subsidy_eligibilities.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('06a7c18d-b780-72f1-8000-5e82681602a8'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM vehicle_registry_mockup WHERE vehicle_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('06a7c18d-b6a9-770c-8000-a006b8304e05'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM fuel_types WHERE fuel_types.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00009s] (UUID('06a7c18d-b689-7b6c-8000-a2b89a22843c'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM fuel_types WHERE fuel_types.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [cached since 0.0007902s ago] (UUID('06a7c18d-b689-7cc5-8000-86a7ed7b15c4'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM gas_stations WHERE gas_stations.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a7c18d-b69e-7768-8000-628639ff2470'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM buyer_profiles WHERE buyer_profiles.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a7c18d-b6cd-7388-8000-2b24ef0e18a7'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM users WHERE users.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a7c18d-b6ba-74eb-8000-acfe33f7ec04'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM citizen_registry_mockup WHERE citizen_registry_mockup.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00011s] (UUID('06a7c18d-b74a-7d18-8000-de21b4c509b7'),)
+INFO     sqlalchemy.engine.Engine:base.py:1848 DELETE FROM kk WHERE kk.id = $1::UUID
+INFO     sqlalchemy.engine.Engine:base.py:1848 [generated in 0.00010s] (UUID('06a7c18d-b6a3-71b2-8000-005299782612'),)
+INFO     sqlalchemy.engine.Engine:base.py:2718 COMMIT
+=========================== short test summary info ============================
+FAILED tests/test_buyer_quota_api.py::test_get_buyer_quota_detail_api - asser...
+======================= 1 failed, 3 deselected in 1.50s ========================

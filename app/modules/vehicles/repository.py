@@ -257,6 +257,7 @@ class VehicleRepository:
             .options(
                 selectinload(VehicleOwnershipRequest.documents),
                 selectinload(VehicleOwnershipRequest.buyer_profile).selectinload(BuyerProfile.user),
+                selectinload(VehicleOwnershipRequest.company),
             )
             .order_by(VehicleOwnershipRequest.submitted_at.desc(), VehicleOwnershipRequest.id.desc())
         )

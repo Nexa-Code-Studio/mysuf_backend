@@ -1,6 +1,6 @@
 ============================= test session starts ==============================
 platform linux -- Python 3.11.9, pytest-9.0.3, pluggy-1.6.0
-rootdir: /home/mashupsoat/Project/mysuf/mysuf_backend
+rootdir: /home/mashupsoat/Project/subsidia/subsidia_backend
 configfile: pyproject.toml
 plugins: anyio-4.13.0, asyncio-1.3.0
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function

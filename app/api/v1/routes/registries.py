@@ -1,5 +1,5 @@
 from typing import Any
-from fastapi import APIRouter, Depends, Query, status, HTTPException
+from fastapi import APIRouter, Depends, Query, status, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -249,4 +249,46 @@ async def delete_vehicle(
     """
     service = RegistryService(db)
     await service.delete_vehicle(vehicle_id)
+
+
+@router.post("/citizens/{citizen_id}/upload-ktp")
+async def upload_citizen_foto_ktp(
+    citizen_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Upload and save the citizen's KTP photo to MinIO storage.
+    """
+    from app.core.storage import StorageService
+    import os
+
+    # 1. Verify citizen exists
+    service = RegistryService(db)
+    citizen = await service.get_citizen(citizen_id)
+    if not citizen:
+        raise HTTPException(status_code=404, detail="Citizen not found")
+
+    # 2. Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an image")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="File is empty")
+
+    # 3. Save to MinIO
+    ext = os.path.splitext(file.filename)[1] or ".jpg"
+    storage_key = f"registries/citizens/{citizen_id}/ktp{ext}"
+    
+    storage = StorageService()
+    storage.save_file(storage_key, file_bytes, file.content_type)
+
+    # 4. Update database
+    citizen.foto_ktp = storage_key
+    await db.commit()
+    
+    return {"message": "Foto KTP uploaded successfully", "storage_key": storage_key}
 

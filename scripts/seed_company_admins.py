@@ -5,7 +5,7 @@ Usage:
     python scripts/seed_company_admins.py
 
 This is safe to run multiple times (idempotent).
-All seeded accounts use the default password: mysuf123
+All seeded accounts use the default password: subsidia123
 """
 import asyncio
 import logging
@@ -46,7 +46,7 @@ async def main() -> None:
     logger.info("Seeded company admin accounts:")
     for entry in COMPANY_ADMIN_DATA:
         logger.info(
-            "  %-35s  →  email: %-38s  pass: mysuf123",
+            "  %-35s  →  email: %-38s  pass: subsidia123",
             entry["company"]["name"],
             entry["admin"]["email"],
         )

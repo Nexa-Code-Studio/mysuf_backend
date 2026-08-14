@@ -15,8 +15,8 @@ from app.modules.spbu_activities.models import SpbuActivityCategory
 # Path prefix dicocokan dengan startswith(), diurutkan dari yang paling panjang duluan.
 PATH_ACTION_MAP: list[tuple[tuple[str, str], tuple[str, SpbuActivityCategory]]] = [
     # ── Auth ──────────────────────────────────────────────────────────────────
-    (("POST",   "/api/v1/auth/login"),              ("Login ke sistem MySuF",                           SpbuActivityCategory.Sistem)),
-    (("POST",   "/api/v1/auth/logout"),             ("Logout dari sistem MySuF",                        SpbuActivityCategory.Sistem)),
+    (("POST",   "/api/v1/auth/login"),              ("Login ke sistem SUBSIDIA",                           SpbuActivityCategory.Sistem)),
+    (("POST",   "/api/v1/auth/logout"),             ("Logout dari sistem SUBSIDIA",                        SpbuActivityCategory.Sistem)),
     (("POST",   "/api/v1/auth/refresh"),            ("Perbarui sesi login",                             SpbuActivityCategory.Sistem)),
 
     # ── Cashier / Transaksi BBM ────────────────────────────────────────────────
@@ -87,10 +87,10 @@ PATH_ACTION_MAP: list[tuple[tuple[str, str], tuple[str, SpbuActivityCategory]]] 
     (("POST",   "/api/v1/registries"),              ("Data registri diperbarui",                        SpbuActivityCategory.Sistem)),
 
     # ── Mysuf Admin ───────────────────────────────────────────────────────────
-    (("POST",   "/api/v1/mysuf-admin"),             ("Aksi super admin dilakukan",                      SpbuActivityCategory.Sistem)),
-    (("PUT",    "/api/v1/mysuf-admin"),             ("Data super admin diperbarui",                     SpbuActivityCategory.Sistem)),
-    (("PATCH",  "/api/v1/mysuf-admin"),             ("Data super admin diperbarui",                     SpbuActivityCategory.Sistem)),
-    (("DELETE", "/api/v1/mysuf-admin"),             ("Data dihapus oleh super admin",                   SpbuActivityCategory.Sistem)),
+    (("POST",   "/api/v1/subsidia-admin"),             ("Aksi super admin dilakukan",                      SpbuActivityCategory.Sistem)),
+    (("PUT",    "/api/v1/subsidia-admin"),             ("Data super admin diperbarui",                     SpbuActivityCategory.Sistem)),
+    (("PATCH",  "/api/v1/subsidia-admin"),             ("Data super admin diperbarui",                     SpbuActivityCategory.Sistem)),
+    (("DELETE", "/api/v1/subsidia-admin"),             ("Data dihapus oleh super admin",                   SpbuActivityCategory.Sistem)),
 
     # ── Fleet ─────────────────────────────────────────────────────────────────
     (("POST",   "/api/v1/fleet"),                   ("Aksi fleet dilakukan",                            SpbuActivityCategory.Sistem)),

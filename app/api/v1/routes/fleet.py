@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, File, UploadFile
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -183,7 +183,7 @@ async def list_fleet_vehicles(
             detail="User is not associated with any company",
         )
 
-    # Fetch vehicle ownerships with joined/selected driver information
+    # 1. Fetch active vehicle ownerships
     vehicles_stmt = (
         select(VehicleOwnership)
         .options(selectinload(VehicleOwnership.assigned_user))
@@ -195,31 +195,53 @@ async def list_fleet_vehicles(
     )
     ownerships = (await db.execute(vehicles_stmt)).scalars().all()
 
-    # Load registry details
-    vehicle_ids = [o.vehicle_id for o in ownerships]
-    registries_stmt = select(VehicleRegistryMockup).filter(
-        VehicleRegistryMockup.id.in_(vehicle_ids)
+    # 2. Fetch pending/rejected requests
+    from app.modules.vehicles.models import VehicleOwnershipRequest, VehicleOwnershipRequestStatus
+    requests_stmt = (
+        select(VehicleOwnershipRequest)
+        .filter(
+            VehicleOwnershipRequest.company_id == current_user.company_id,
+            VehicleOwnershipRequest.status.in_([
+                VehicleOwnershipRequestStatus.PENDING,
+                VehicleOwnershipRequestStatus.REJECTED
+            ])
+        )
+        .order_by(VehicleOwnershipRequest.created_at.desc())
     )
-    registries_res = (await db.execute(registries_stmt)).scalars().all() if vehicle_ids else []
+    requests = (await db.execute(requests_stmt)).scalars().all()
+
+    # 3. Load registry details for all vehicle IDs combined
+    vehicle_ids = [o.vehicle_id for o in ownerships] + [r.vehicle_id for r in requests]
+    registries_res = []
+    if vehicle_ids:
+        registries_stmt = select(VehicleRegistryMockup).filter(
+            VehicleRegistryMockup.id.in_(vehicle_ids)
+        )
+        registries_res = (await db.execute(registries_stmt)).scalars().all()
     registries_by_id = {r.id: r for r in registries_res}
 
-    # Load quota details for current month
+    # 4. Load quota details for active vehicles
     now = datetime.utcnow()
-    quotas_stmt = select(SubsidyQuota).filter(
-        SubsidyQuota.owner_type == SubsidyOwnerType.VEHICLE,
-        SubsidyQuota.owner_id.in_(vehicle_ids),
-        SubsidyQuota.month == now.month,
-        SubsidyQuota.year == now.year,
-    )
-    quotas_res = (await db.execute(quotas_stmt)).scalars().all() if vehicle_ids else []
+    active_vehicle_ids = [o.vehicle_id for o in ownerships]
+    quotas_res = []
+    if active_vehicle_ids:
+        quotas_stmt = select(SubsidyQuota).filter(
+            SubsidyQuota.owner_type == SubsidyOwnerType.VEHICLE,
+            SubsidyQuota.owner_id.in_(active_vehicle_ids),
+            SubsidyQuota.month == now.month,
+            SubsidyQuota.year == now.year,
+        )
+        quotas_res = (await db.execute(quotas_stmt)).scalars().all()
     quotas_by_vehicle_id = {q.owner_id: q for q in quotas_res}
 
-    # Load policies
+    # 5. Load policies
     policies_stmt = select(SubsidyPolicy)
     policies = (await db.execute(policies_stmt)).scalars().all()
     policies_by_usage = {p.usage_type: p for p in policies}
 
     items = []
+    
+    # Add active ownerships
     for o in ownerships:
         reg = registries_by_id.get(o.vehicle_id)
         type_str = f"{reg.brand} {reg.vehicle_type}" if reg else o.usage_type.value
@@ -244,12 +266,38 @@ async def list_fleet_vehicles(
             )
         )
 
+    # Add pending/rejected requests
+    for r in requests:
+        reg = registries_by_id.get(r.vehicle_id)
+        type_str = f"{reg.brand} {reg.vehicle_type}" if reg else r.usage_type.value
+        status_label = "Menunggu Verifikasi" if r.status == VehicleOwnershipRequestStatus.PENDING else "Ditolak"
+
+        policy = policies_by_usage.get(r.usage_type)
+        limit = float(policy.monthly_quota_liters) if policy else 200.0
+
+        items.append(
+            FleetVehicleItem(
+                id=r.id,
+                plate=r.plate_number_snapshot,
+                type=type_str,
+                driver="Belum Ditugaskan",
+                driver_id=None,
+                status=status_label,
+                quotaLimit=limit,
+                quotaUsed=0.0,
+                vehicle_nfc_id=r.vehicle_nfc_id,
+            )
+        )
+
     return FleetVehicleListResponse(items=items, total=len(items))
 
 
-@router.post("/vehicles", response_model=FleetVehicleItem)
+@router.post("/vehicles", response_model=Any)
 async def register_fleet_vehicle(
-    body: FleetVehicleCreateRequest,
+    plate: str = Form(...),
+    vehicle_nfc_id: Optional[str] = Form(None),
+    stnk_photo: UploadFile = File(...),
+    vehicle_photo: UploadFile = File(...),
     current_user: User = Depends(require_roles([UserRole.COMPANY_ADMIN])),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -259,94 +307,29 @@ async def register_fleet_vehicle(
             detail="User is not associated with any company",
         )
 
-    plate_clean = body.plate.strip().upper()
-
-    # 1. Lookup plate number in VehicleRegistryMockup
-    registry_stmt = select(VehicleRegistryMockup).filter(
-        func.upper(VehicleRegistryMockup.plate_number) == plate_clean
-    )
-    registry_vehicle = (await db.execute(registry_stmt)).scalars().first()
-    if not registry_vehicle:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Plat nomor tidak ditemukan di database Kepolisian (Registry Mockup)",
-        )
-
-    # 2. Check if already registered
-    existing_stmt = select(VehicleOwnership).filter(
-        VehicleOwnership.vehicle_id == registry_vehicle.id
-    )
-    existing = (await db.execute(existing_stmt)).scalars().first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Kendaraan dengan plat nomor ini sudah terdaftar",
-        )
-
-    # 3. Determine usage type based on registry
-    usage_type = VehicleUsageType.COMMERCIAL_CAR
-    if registry_vehicle.jenis == VehicleClass.TRUCK:
-        usage_type = VehicleUsageType.COMMERCIAL_TRUCK
-    elif registry_vehicle.jenis == VehicleClass.MOTORCYCLE:
-        usage_type = VehicleUsageType.COMMERCIAL_MOTORCYCLE
-
-    # Validate and save vehicle_nfc_id if provided
-    if body.vehicle_nfc_id:
-        from app.modules.vehicles.service import VehicleService
-        vehicle_service = VehicleService(db)
-        await vehicle_service.validate_cross_nfc_uniqueness(body.vehicle_nfc_id)
-        # Sync the NFC ID to the registry mockup for consistency
-        registry_vehicle.vehicle_nfc_id = body.vehicle_nfc_id
-
-    # Create VehicleOwnership
-    ownership = VehicleOwnership(
-        owner_type=VehicleOwnerType.COMPANY,
-        owner_id=current_user.company_id,
-        vehicle_id=registry_vehicle.id,
-        ownership_status=VehicleOwnershipStatus.COMPANY,
-        usage_type=usage_type,
-        quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
-        plate_number_snapshot=registry_vehicle.plate_number,
-        ktp_nfc_id_snapshot=f"COMPANY-{str(current_user.company_id)[:8]}",
-        vehicle_nfc_id=body.vehicle_nfc_id,
+    from app.modules.vehicles.service import VehicleService
+    service = VehicleService(db)
+    
+    req = await service.submit_company_vehicle(
+        company_id=current_user.company_id,
+        current_user=current_user,
+        plate=plate,
+        vehicle_nfc_id=vehicle_nfc_id,
+        stnk_photo=stnk_photo,
+        vehicle_photo=vehicle_photo,
     )
 
-    db.add(ownership)
-    await db.flush()
-
-    # Ensure SubsidyQuota exists for this month
-    now = datetime.utcnow()
-    policy_stmt = select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == usage_type)
-    policy = (await db.execute(policy_stmt)).scalars().first()
-    limit = policy.monthly_quota_liters if policy else Decimal("200.00")
-
-    quota = SubsidyQuota(
-        owner_type=SubsidyOwnerType.VEHICLE,
-        owner_id=registry_vehicle.id,
-        subsidy_policy_id=policy.id if policy else None,
-        month=now.month,
-        year=now.year,
-        quota_liters=limit,
-        used_liters=Decimal("0.00"),
-        is_active=True,
-    )
-    db.add(quota)
-    await db.commit()
-    await db.refresh(ownership)
-
-    type_str = f"{registry_vehicle.brand} {registry_vehicle.vehicle_type}"
-
-    return FleetVehicleItem(
-        id=ownership.id,
-        plate=ownership.plate_number_snapshot,
-        type=type_str,
-        driver="Belum Ditugaskan",
-        driver_id=None,
-        status="Aktif",
-        quotaLimit=float(limit),
-        quotaUsed=0.0,
-        vehicle_nfc_id=ownership.vehicle_nfc_id,
-    )
+    return {
+        "id": req.id,
+        "plate": req.plate_number_snapshot,
+        "type": req.usage_type.value,
+        "driver": "Belum Ditugaskan",
+        "driver_id": None,
+        "status": "Menunggu Verifikasi",
+        "quotaLimit": 200.0,
+        "quotaUsed": 0.0,
+        "vehicle_nfc_id": req.vehicle_nfc_id,
+    }
 
 
 @router.delete("/vehicles/{ownership_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -367,15 +350,34 @@ async def delete_fleet_vehicle(
         VehicleOwnership.owner_id == current_user.company_id,
     )
     ownership = (await db.execute(stmt)).scalars().first()
-    if not ownership:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Kendaraan tidak ditemukan atau bukan milik perusahaan Anda",
+    if ownership:
+        from app.modules.vehicles.models import VehicleOwnershipRequest
+        rel_reqs_stmt = select(VehicleOwnershipRequest).filter(
+            VehicleOwnershipRequest.approved_vehicle_ownership_id == ownership.id
         )
+        rel_reqs = (await db.execute(rel_reqs_stmt)).scalars().all()
+        for r in rel_reqs:
+            r.approved_vehicle_ownership_id = None
 
-    await db.delete(ownership)
-    await db.commit()
-    return None
+        await db.delete(ownership)
+        await db.commit()
+        return None
+
+    from app.modules.vehicles.models import VehicleOwnershipRequest
+    req_stmt = select(VehicleOwnershipRequest).filter(
+        VehicleOwnershipRequest.id == ownership_id,
+        VehicleOwnershipRequest.company_id == current_user.company_id,
+    )
+    request_obj = (await db.execute(req_stmt)).scalars().first()
+    if request_obj:
+        await db.delete(request_obj)
+        await db.commit()
+        return None
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Kendaraan tidak ditemukan atau bukan milik perusahaan Anda",
+    )
 
 
 @router.get("/vehicles/{plate}/transactions", response_model=FleetVehicleTransactionListResponse)

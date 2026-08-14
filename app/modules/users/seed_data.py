@@ -8,7 +8,8 @@ from app.modules.users.models import User, UserRole, BuyerProfile, VerificationS
 from app.modules.companies.models import Company
 from app.modules.gas_stations.models import GasStation
 from app.core.security import get_password_hash
-from app.modules.registries.models import CitizenRegistryMockup
+from app.modules.registries.models import CitizenRegistryMockup, VehicleRegistryMockup, VehicleClass
+from app.modules.vehicles.models import VehicleOwnership, VehicleOwnerType, VehicleOwnershipStatus, VehicleQuotaMode, VehicleUsageType
 from app.modules.buyer_registrations.models import (
     BuyerRegistrationAttempt,
     BuyerRegistrationStatus,
@@ -20,17 +21,17 @@ from app.modules.wallets.models import Wallet, OwnerType
 
 
 BUYERS_TO_SEED = [
-    {"nik": "3201010101010001", "email": "buyer@mysuf.com", "name": "Ahmad Sulaiman"},
-    {"nik": "3511111411040003", "email": "ekya@mysuf.com", "name": "EKYA MUHAMMAD HASFI FADLILURRAHMAN"},
-    {"nik": "3201010101010002", "email": "siti@mysuf.com", "name": "Siti Rahmawati"},
-    {"nik": "3201010101010003", "email": "budi@mysuf.com", "name": "Budi Hartono"},
-    {"nik": "3201010101010004", "email": "dewi@mysuf.com", "name": "Dewi Lestari"},
-    {"nik": "3201010101010005", "email": "rizky@mysuf.com", "name": "Rizky Maulana"},
-    {"nik": "3201010101010006", "email": "nadia@mysuf.com", "name": "Nadia Khairunnisa"},
-    {"nik": "3201010101010007", "email": "fajar@mysuf.com", "name": "Fajar Nugroho"},
-    {"nik": "3201010101010008", "email": "putri@mysuf.com", "name": "Putri Ayuningtyas"},
-    {"nik": "3201010101010009", "email": "yusuf@mysuf.com", "name": "Yusuf Hidayat"},
-    {"nik": "3201010101010010", "email": "intan@mysuf.com", "name": "Intan Permatasari"},
+    {"nik": "3201010101010001", "email": "buyer@sidia.com", "name": "Ahmad Sulaiman"},
+    {"nik": "3511111411049999", "email": "budi.pratama@sidia.com", "name": "BUDI PRATAMA"},
+    {"nik": "3201010101010002", "email": "siti@sidia.com", "name": "Siti Rahmawati"},
+    {"nik": "3201010101010003", "email": "budi@sidia.com", "name": "Budi Hartono"},
+    {"nik": "3201010101010004", "email": "dewi@sidia.com", "name": "Dewi Lestari"},
+    {"nik": "3201010101010005", "email": "rizky@sidia.com", "name": "Rizky Maulana"},
+    {"nik": "3201010101010006", "email": "nadia@sidia.com", "name": "Nadia Khairunnisa"},
+    {"nik": "3201010101010007", "email": "fajar@sidia.com", "name": "Fajar Nugroho"},
+    {"nik": "3201010101010008", "email": "putri@sidia.com", "name": "Putri Ayuningtyas"},
+    {"nik": "3201010101010009", "email": "yusuf@sidia.com", "name": "Yusuf Hidayat"},
+    {"nik": "3201010101010010", "email": "intan@sidia.com", "name": "Intan Permatasari"},
 ]
 
 async def seed_users(session: AsyncSession) -> dict[str, int]:
@@ -67,12 +68,12 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
     # - AC: Admin Company
     # - AGS: Admin Gas Station
     # - SO: Sales Officer
-    default_password_hash = get_password_hash("mysuf123")
+    default_password_hash = get_password_hash("subsidia123")
     
     users_data = [
         {
             "name": "Super Admin",
-            "email": "super.admin@mysuf.id",
+            "email": "super.admin@sidia.id",
             "password": default_password_hash,
             "role": [UserRole.SUPER_ADMIN],
             "company_id": None,
@@ -82,7 +83,7 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
         },
         {
             "name": "SPBU Admin",
-            "email": "spbu.admin@mysuf.id",
+            "email": "spbu.admin@sidia.id",
             "password": default_password_hash,
             "role": [UserRole.SPBU_ADMIN],
             "company_id": None,
@@ -92,7 +93,7 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
         },
         {
             "name": "Fleet Admin",
-            "email": "fleet.admin@mysuf.id",
+            "email": "fleet.admin@sidia.id",
             "password": default_password_hash,
             "role": [UserRole.COMPANY_ADMIN],
             "company_id": company.id,
@@ -102,7 +103,7 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
         },
         {
             "name": "Government Admin",
-            "email": "gov.admin@mysuf.id",
+            "email": "gov.admin@sidia.id",
             "password": default_password_hash,
             "role": [UserRole.GOV_ADMIN],
             "company_id": None,
@@ -112,7 +113,7 @@ async def seed_users(session: AsyncSession) -> dict[str, int]:
         },
         {
             "name": "Sales Officer",
-            "email": "so@mysuf.id",
+            "email": "so@sidia.id",
             "password": default_password_hash,
             "role": [UserRole.SALES_OFFICER],
             "company_id": None,
@@ -444,6 +445,72 @@ async def seed_buyer_user(session: AsyncSession) -> dict[str, int]:
             if not wallet.is_active:
                 wallet.is_active = True
                 repaired_current_buyer = True
+
+        # 9. Seed Vehicle Ownerships for this buyer if they have vehicles in the registry
+        result_veh = await session.execute(
+            select(VehicleRegistryMockup).filter(VehicleRegistryMockup.owner_nik == citizen.nik)
+        )
+        registry_vehicles = result_veh.scalars().all()
+        for reg_veh in registry_vehicles:
+            result_own = await session.execute(
+                select(VehicleOwnership).filter(
+                    VehicleOwnership.owner_type == VehicleOwnerType.BUYER_PROFILE,
+                    VehicleOwnership.owner_id == buyer_profile.id,
+                    VehicleOwnership.vehicle_id == reg_veh.id
+                )
+            )
+            ownership = result_own.scalars().first()
+
+            # Map usage type based on vehicle jenis and citizen job
+            if reg_veh.jenis == VehicleClass.TRUCK:
+                usage_type = VehicleUsageType.COMMERCIAL_TRUCK
+            elif reg_veh.jenis == VehicleClass.MOTORCYCLE:
+                if citizen.pekerjaan == "OJOL":
+                    usage_type = VehicleUsageType.COMMERCIAL_MOTORCYCLE
+                else:
+                    usage_type = VehicleUsageType.PERSONAL
+            elif reg_veh.jenis == VehicleClass.CAR:
+                if citizen.pekerjaan in {"UMKM", "NELAYAN"}:
+                    usage_type = VehicleUsageType.COMMERCIAL_CAR
+                else:
+                    usage_type = VehicleUsageType.PERSONAL
+            else:
+                usage_type = VehicleUsageType.PERSONAL
+
+            # Map quota mode based on usage type
+            if usage_type == VehicleUsageType.PERSONAL:
+                quota_mode = VehicleQuotaMode.OWNER_PERSONAL_QUOTA
+            else:
+                quota_mode = VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA
+
+            if ownership is None:
+                ownership = VehicleOwnership(
+                    owner_type=VehicleOwnerType.BUYER_PROFILE,
+                    owner_id=buyer_profile.id,
+                    vehicle_id=reg_veh.id,
+                    ownership_status=VehicleOwnershipStatus.PERSONAL,
+                    usage_type=usage_type,
+                    quota_mode=quota_mode,
+                    plate_number_snapshot=reg_veh.plate_number,
+                    ktp_nfc_id_snapshot=citizen.ktp_nfc_id,
+                    vehicle_nfc_id=reg_veh.vehicle_nfc_id,
+                )
+                session.add(ownership)
+                created_current_buyer = True
+            else:
+                if (
+                    ownership.plate_number_snapshot != reg_veh.plate_number
+                    or ownership.ktp_nfc_id_snapshot != citizen.ktp_nfc_id
+                    or ownership.vehicle_nfc_id != reg_veh.vehicle_nfc_id
+                    or ownership.usage_type != usage_type
+                    or ownership.quota_mode != quota_mode
+                ):
+                    ownership.plate_number_snapshot = reg_veh.plate_number
+                    ownership.ktp_nfc_id_snapshot = citizen.ktp_nfc_id
+                    ownership.vehicle_nfc_id = reg_veh.vehicle_nfc_id
+                    ownership.usage_type = usage_type
+                    ownership.quota_mode = quota_mode
+                    repaired_current_buyer = True
 
 
 

@@ -1,3 +1,3 @@
-# Install the current workspace package plus test and identity dependencies.
+# Install the current workspace package plus test dependencies.
 # This keeps imports pointed at the local source tree instead of an older Git checkout.
--e .[dev,identity]
+-e .[dev]

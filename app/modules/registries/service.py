@@ -154,6 +154,7 @@ class RegistryService:
             kk_id=citizen_in.kk_id,
             pekerjaan=citizen_in.pekerjaan,
             penghasilan=citizen_in.penghasilan,
+            foto_ktp=citizen_in.foto_ktp,
         )
         return await self.repo.create_citizen(db_citizen)
 
@@ -220,6 +221,9 @@ class RegistryService:
         if citizen_in.penghasilan is not None:
             citizen.penghasilan = citizen_in.penghasilan
 
+        if citizen_in.foto_ktp is not None:
+            citizen.foto_ktp = citizen_in.foto_ktp
+
         return await self.repo.update_citizen(citizen)
 
     async def delete_citizen(self, citizen_id: str) -> None:
@@ -274,6 +278,8 @@ class RegistryService:
             njkb=vehicle_in.njkb,
             owner_name=vehicle_in.owner_name,
             owner_nik=vehicle_in.owner_nik,
+            jenis=vehicle_in.jenis,
+            vehicle_nfc_id=vehicle_in.vehicle_nfc_id,
         )
         return await self.repo.create_vehicle(db_vehicle)
 

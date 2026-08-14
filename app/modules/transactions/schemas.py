@@ -92,7 +92,7 @@ class TransferRequest(BaseModel):
 
 class FuelPurchaseRequest(BaseModel):
     nik: str
-    plate_number: str
+    plate_number: str | None = None
     fuel_type_id: UUID
     liters: Decimal
     total_amount: Decimal
@@ -152,7 +152,7 @@ class FuelPurchaseRequest(BaseModel):
 class FuelPurchaseResponse(BaseModel):
     transaction_id: UUID
     wallet_transaction_id: UUID | None = None
-    plate_number: str
+    plate_number: str | None = None
     fuel_name: str
     liters: Decimal
     total_amount: Decimal
@@ -169,7 +169,7 @@ class FuelPurchaseResponse(BaseModel):
 
 class XenditFuelPurchaseRequest(BaseModel):
     nik: str
-    plate_number: str
+    plate_number: str | None = None
     fuel_type_id: UUID
     liters: Decimal
     total_amount: Decimal
@@ -197,7 +197,7 @@ class XenditFuelPurchaseResponse(BaseModel):
     total_amount: Decimal
     fuel_name: str
     liters: Decimal
-    plate_number: str
+    plate_number: str | None = None
     status: str
     expires_at: datetime | None = None
     detected_frauds: List[dict] = []
@@ -215,7 +215,7 @@ class XenditFuelPurchaseStatusResponse(BaseModel):
     total_amount: Decimal
     fuel_name: str
     liters: Decimal
-    plate_number: str
+    plate_number: str | None = None
     expires_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -236,7 +236,7 @@ class CashierTransactionListItemResponse(BaseModel):
     created_at: datetime
     transaction_status: FuelTransactionStatus
     payment_method: PaymentMethod
-    plate_number_snapshot: str
+    plate_number_snapshot: str | None = None
     nik_snapshot: str | None = None
     buyer_name: str | None = None
     buyer_foto_ktp_url: str | None = None
@@ -301,7 +301,7 @@ class FraudLogResponse(BaseModel):
     buyer_profile_id: UUID | None = None
     buyer_name: str | None = None
     vehicle_ownership_id: UUID | None = None
-    plate_number_snapshot: str
+    plate_number_snapshot: str | None = None
     nik_snapshot: str | None = None
     risk_score: int
     risk_level: str

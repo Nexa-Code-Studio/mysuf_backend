@@ -2,6 +2,7 @@ import hashlib
 import mimetypes
 import shutil
 from datetime import datetime
+from typing import Any, Dict, Optional
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -232,14 +233,20 @@ class VehicleService:
                 if registry_vehicle is not None:
                     type_label = f"{registry_vehicle.brand} - {registry_vehicle.vehicle_type}"
 
+                _user_obj = buyer_profile.user
+                _is_blocked = getattr(_user_obj, "is_blocked", False) if _user_obj else False
+                _frozen_until = getattr(_user_obj, "frozen_until", None) if _user_obj else None
+                from datetime import datetime as _dt
+                _is_frozen = bool(_frozen_until and _frozen_until > _dt.utcnow())
+
                 quota_summary = await self._build_vehicle_quota_summary(
                     ownership=ownership,
                     buyer_profile=buyer_profile,
                     month=current_time.month,
                     year=current_time.year,
                 )
-                is_eligible = quota_summary["quota_liters"] is not None
-
+                is_eligible = quota_summary["quota_liters"] is not None and not _is_blocked and not _is_frozen
+ 
                 vehicles = [
                     {
                         "ownership_id": ownership.id,
@@ -266,7 +273,7 @@ class VehicleService:
                         "remaining_liters": quota_summary["remaining_liters"],
                     }
                 ]
-
+ 
                 # Get driver's personal quota
                 subsidy_service = SubsidyService(self.db)
                 personal_quota = await subsidy_service.get_or_sync_personal_quota(
@@ -277,7 +284,14 @@ class VehicleService:
                 quota_liters = float(Decimal(personal_quota.quota_liters)) if personal_quota else 0.0
                 used_liters = float(Decimal(personal_quota.used_liters)) if personal_quota else 0.0
                 remaining_liters = max(quota_liters - used_liters, 0.0)
-                is_eligible_driver = personal_quota.is_active if personal_quota else False
+                is_eligible_driver = (personal_quota.is_active if personal_quota else False) and not _is_blocked and not _is_frozen
+
+                account_status_commercial = self._compute_account_status(
+                    is_blocked=_is_blocked,
+                    is_frozen=_is_frozen,
+                    is_quota_active=personal_quota.is_active if personal_quota else False,
+                    remaining_liters=remaining_liters,
+                )
 
                 response = {
                     "buyer": {
@@ -288,10 +302,14 @@ class VehicleService:
                         "verification_status": buyer_profile.verification_status.value,
                         "risk_score": float(Decimal(buyer_profile.risk_score)),
                         "is_pin_active": buyer_profile.is_pin_active,
+                        "is_blocked": _is_blocked,
+                        "is_frozen": _is_frozen,
+                        "frozen_until": _frozen_until.isoformat() if _frozen_until else None,
                         "quota_liters": quota_liters,
                         "used_liters": used_liters,
                         "remaining_liters": remaining_liters,
                         "is_eligible": is_eligible_driver,
+                        "account_status": account_status_commercial,
                     },
                     "vehicles": vehicles,
                 }
@@ -318,6 +336,12 @@ class VehicleService:
                 detail="Buyer profile or Vehicle not found for the provided NFC ID or NIK.",
             )
 
+        _user_obj2 = buyer_profile.user
+        _is_blocked2 = getattr(_user_obj2, "is_blocked", False) if _user_obj2 else False
+        _frozen_until2 = getattr(_user_obj2, "frozen_until", None) if _user_obj2 else None
+        from datetime import datetime as _dt2
+        _is_frozen2 = bool(_frozen_until2 and _frozen_until2 > _dt2.utcnow())
+
         ownerships = await self.repo.get_vehicle_ownerships_by_ktp_nfc_id_snapshot(
             buyer_profile.ktp_nfc_id_snapshot
         )
@@ -335,7 +359,7 @@ class VehicleService:
                 month=current_time.month,
                 year=current_time.year,
             )
-            is_eligible = quota_summary["quota_liters"] is not None
+            is_eligible = quota_summary["quota_liters"] is not None and not _is_blocked2 and not _is_frozen2
 
             vehicles.append(
                 {
@@ -374,7 +398,14 @@ class VehicleService:
         quota_liters = float(Decimal(personal_quota.quota_liters)) if personal_quota else 0.0
         used_liters = float(Decimal(personal_quota.used_liters)) if personal_quota else 0.0
         remaining_liters = max(quota_liters - used_liters, 0.0)
-        is_eligible = personal_quota.is_active if personal_quota else False
+        is_eligible = (personal_quota.is_active if personal_quota else False) and not _is_blocked2 and not _is_frozen2
+
+        account_status_personal = self._compute_account_status(
+            is_blocked=_is_blocked2,
+            is_frozen=_is_frozen2,
+            is_quota_active=personal_quota.is_active if personal_quota else False,
+            remaining_liters=remaining_liters,
+        )
 
         response = {
             "buyer": {
@@ -385,10 +416,14 @@ class VehicleService:
                 "verification_status": buyer_profile.verification_status.value,
                 "risk_score": float(Decimal(buyer_profile.risk_score)),
                 "is_pin_active": buyer_profile.is_pin_active,
+                "is_blocked": _is_blocked2,
+                "is_frozen": _is_frozen2,
+                "frozen_until": _frozen_until2.isoformat() if _frozen_until2 else None,
                 "quota_liters": quota_liters,
                 "used_liters": used_liters,
                 "remaining_liters": remaining_liters,
                 "is_eligible": is_eligible,
+                "account_status": account_status_personal,
             },
             "vehicles": vehicles,
         }
@@ -1156,6 +1191,15 @@ class VehicleService:
                 import logging
                 logging.getLogger(__name__).warning(f"Failed to delete {key} during cleanup: {e}")
 
+    def _cleanup_storage_dir(self, directory: Path | None) -> None:
+        if directory and directory.exists():
+            try:
+                import shutil
+                shutil.rmtree(directory)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to delete directory {directory} during cleanup: {e}")
+
     def _to_vehicle_category(self, usage_type: VehicleUsageType) -> str:
         if usage_type == VehicleUsageType.PERSONAL:
             return "nonCommercial"
@@ -1168,6 +1212,33 @@ class VehicleService:
 
     def _utcnow(self):
         return datetime.utcnow()
+
+    def _compute_account_status(
+        self,
+        *,
+        is_blocked: bool,
+        is_frozen: bool,
+        is_quota_active: bool,
+        remaining_liters: float,
+    ) -> str:
+        """Return a single enum string representing the buyer's subsidy account state.
+
+        Priority order:
+          BANNED          — account permanently blocked (fraud / policy violation)
+          FROZEN          — account temporarily frozen
+          NOT_ELIGIBLE    — quota record not active (no KK match / income too high)
+          QUOTA_EXHAUSTED — quota active but monthly allowance fully consumed
+          ACTIVE          — eligible and has remaining quota
+        """
+        if is_blocked:
+            return "BANNED"
+        if is_frozen:
+            return "FROZEN"
+        if not is_quota_active:
+            return "NOT_ELIGIBLE"
+        if remaining_liters <= 0:
+            return "QUOTA_EXHAUSTED"
+        return "ACTIVE"
 
     def _build_family_member_payload(
         self,
@@ -1352,23 +1423,37 @@ class VehicleService:
             buyer_profile = req.buyer_profile
             buyer_name = ""
             buyer_nik = ""
+            company_id = req.company_id
+            company_name = None
+            company_nib = None
+
             if buyer_profile:
                 buyer_nik = buyer_profile.nik_snapshot
                 if buyer_profile.user:
                     buyer_name = buyer_profile.user.name
-            
+            elif req.company:
+                company_name = req.company.name
+                company_nib = req.company.nib
+                # Defensively fill buyer fields for older frontend compatibility
+                buyer_name = req.company.name
+                buyer_nik = req.company.nib
+
             results.append(
                 AdminVehicleRequestResponse(
                     id=req.id,
                     buyer_profile_id=req.buyer_profile_id,
                     buyer_name=buyer_name,
                     buyer_nik=buyer_nik,
+                    company_id=company_id,
+                    company_name=company_name,
+                    company_nib=company_nib,
                     vehicle_id=req.vehicle_id,
                     ownership_status=req.ownership_status,
                     usage_type=req.usage_type,
                     quota_mode=req.quota_mode,
                     plate_number_snapshot=req.plate_number_snapshot,
                     ktp_nfc_id_snapshot=req.ktp_nfc_id_snapshot,
+                    vehicle_nfc_id=req.vehicle_nfc_id,
                     status=req.status,
                     review_note=req.review_note,
                     submitted_at=req.submitted_at,
@@ -1448,16 +1533,30 @@ class VehicleService:
 
             final_storage_dir: Path | None = None
             try:
-                ownership = VehicleOwnership(
-                    owner_type=VehicleOwnerType.BUYER_PROFILE,
-                    owner_id=request.buyer_profile_id,
-                    vehicle_id=request.vehicle_id,
-                    ownership_status=request.ownership_status,
-                    usage_type=request.usage_type,
-                    quota_mode=request.quota_mode,
-                    plate_number_snapshot=request.plate_number_snapshot,
-                    ktp_nfc_id_snapshot=request.ktp_nfc_id_snapshot,
-                )
+                if request.company_id:
+                    ownership = VehicleOwnership(
+                        owner_type=VehicleOwnerType.COMPANY,
+                        owner_id=request.company_id,
+                        vehicle_id=request.vehicle_id,
+                        ownership_status=request.ownership_status,
+                        usage_type=request.usage_type,
+                        quota_mode=request.quota_mode,
+                        plate_number_snapshot=request.plate_number_snapshot,
+                        ktp_nfc_id_snapshot=request.ktp_nfc_id_snapshot,
+                        vehicle_nfc_id=request.vehicle_nfc_id,
+                    )
+                else:
+                    ownership = VehicleOwnership(
+                        owner_type=VehicleOwnerType.BUYER_PROFILE,
+                        owner_id=request.buyer_profile_id,
+                        vehicle_id=request.vehicle_id,
+                        ownership_status=request.ownership_status,
+                        usage_type=request.usage_type,
+                        quota_mode=request.quota_mode,
+                        plate_number_snapshot=request.plate_number_snapshot,
+                        ktp_nfc_id_snapshot=request.ktp_nfc_id_snapshot,
+                        vehicle_nfc_id=request.vehicle_nfc_id,
+                    )
                 await self.repo.create_vehicle_ownership(ownership)
 
                 copied_documents = []
@@ -1477,13 +1576,36 @@ class VehicleService:
                 request.review_note = review_note
                 request.reviewed_at = self._utcnow()
 
-                if request.usage_type in {
-                    VehicleUsageType.PERSONAL,
-                    VehicleUsageType.COMMERCIAL_MOTORCYCLE,
-                    VehicleUsageType.COMMERCIAL_CAR,
-                    VehicleUsageType.COMMERCIAL_TRUCK,
-                }:
-                    await self._recompute_kk_subsidy_eligibility(request.buyer_profile_id)
+                if request.company_id:
+                    # Create SubsidyQuota for company vehicle
+                    from app.modules.subsidies.models import SubsidyQuota, SubsidyPolicy, SubsidyOwnerType
+                    from decimal import Decimal
+                    from sqlalchemy import select
+                    
+                    policy_stmt = select(SubsidyPolicy).filter(SubsidyPolicy.usage_type == request.usage_type)
+                    policy = (await self.db.execute(policy_stmt)).scalars().first()
+                    limit = policy.monthly_quota_liters if policy else Decimal("200.00")
+                    
+                    quota = SubsidyQuota(
+                        owner_type=SubsidyOwnerType.VEHICLE,
+                        owner_id=request.vehicle_id,
+                        subsidy_policy_id=policy.id if policy else None,
+                        month=request.submitted_at.month,
+                        year=request.submitted_at.year,
+                        quota_liters=limit,
+                        used_liters=Decimal("0.00"),
+                        is_active=True,
+                    )
+                    self.db.add(quota)
+                else:
+                    # Recalculate KK eligibility for buyer
+                    if request.usage_type in {
+                        VehicleUsageType.PERSONAL,
+                        VehicleUsageType.COMMERCIAL_MOTORCYCLE,
+                        VehicleUsageType.COMMERCIAL_CAR,
+                        VehicleUsageType.COMMERCIAL_TRUCK,
+                    }:
+                        await self._recompute_kk_subsidy_eligibility(request.buyer_profile_id)
 
                 await self.repo.commit()
             except HTTPException:
@@ -1524,3 +1646,297 @@ class VehicleService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid verification status. Must be APPROVED or REJECTED.",
             )
+
+    async def calculate_cashier_pricing(
+        self,
+        *,
+        nik: str,
+        fuel_type_id: UUID,
+        calc_type: str,
+        nominal: float,
+        plate_number: str | None = None,
+    ) -> dict[str, Any]:
+        from decimal import Decimal
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.modules.users.models import BuyerProfile, VerificationStatus
+        from app.modules.vehicles.models import VehicleOwnership, VehicleUsageType
+        from app.modules.fuels.models import FuelType, SubsidyType
+        from app.modules.subsidies.service import SubsidyService
+        from app.modules.subsidies.models import EligibilityStatus
+
+        # 1. Lookup buyer profile
+        res_profile = await self.db.execute(
+            select(BuyerProfile)
+            .options(selectinload(BuyerProfile.user))
+            .filter(BuyerProfile.nik_snapshot == nik),
+        )
+        buyer_profile = res_profile.scalars().first()
+        if not buyer_profile:
+            # Fallback by NFC ID
+            res_profile = await self.db.execute(
+                select(BuyerProfile)
+                .options(selectinload(BuyerProfile.user))
+                .filter(BuyerProfile.ktp_nfc_id_snapshot == nik),
+            )
+            buyer_profile = res_profile.scalars().first()
+
+        if not buyer_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Profil pembeli tidak ditemukan.",
+            )
+
+        # 2. Lookup vehicle ownership if plate_number is provided
+        vehicle_ownership = None
+        if plate_number and plate_number.strip().upper() != "-":
+            res_vehicle = await self.db.execute(
+                select(VehicleOwnership).filter(
+                    VehicleOwnership.plate_number_snapshot == plate_number.strip().upper(),
+                    VehicleOwnership.owner_id == buyer_profile.id,
+                ),
+            )
+            vehicle_ownership = res_vehicle.scalars().first()
+
+        # 3. Lookup fuel type
+        res_fuel = await self.db.execute(
+            select(FuelType).filter(FuelType.id == fuel_type_id),
+        )
+        fuel_type = res_fuel.scalars().first()
+        if not fuel_type:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Tipe bahan bakar tidak ditemukan.",
+            )
+
+        # 4. Check block/freeze status
+        _user_obj = buyer_profile.user
+        is_buyer_blocked = (buyer_profile.verification_status == VerificationStatus.REJECTED or 
+                            (_user_obj and _user_obj.is_blocked))
+        
+        is_buyer_frozen = False
+        if _user_obj and _user_obj.frozen_until:
+            if _user_obj.frozen_until > datetime.utcnow():
+                is_buyer_frozen = True
+
+        is_eligible_for_subsidy = (
+            buyer_profile.verification_status == VerificationStatus.VERIFIED
+            and not is_buyer_blocked
+            and not is_buyer_frozen
+        )
+
+        # 5. Fetch subsidy quota
+        subsidy_service = SubsidyService(self.db)
+        now = datetime.utcnow()
+        month = now.month
+        year = now.year
+
+        subsidy_quota = None
+        is_quota_active = False
+
+        if fuel_type.subsidy_type == SubsidyType.SUBSIDIZED:
+            if is_eligible_for_subsidy:
+                if vehicle_ownership is None or vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
+                    policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
+                    if policy:
+                        latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
+                            kk_id=buyer_profile.kk_id,
+                            subsidy_policy_id=policy.id,
+                        )
+                        if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
+                            kk_eligibility_id = latest_eligibility.id
+                            if vehicle_ownership is None:
+                                subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
+                                    buyer_profile=buyer_profile,
+                                    month=month,
+                                    year=year,
+                                )
+                            else:
+                                subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                                    vehicle_ownership=vehicle_ownership,
+                                    month=month,
+                                    year=year,
+                                    kk_subsidy_eligibility_id=kk_eligibility_id,
+                                )
+                else:
+                    policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
+                    if policy:
+                        subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
+                            vehicle_ownership=vehicle_ownership,
+                            month=month,
+                            year=year,
+                        )
+
+        if subsidy_quota:
+            is_quota_active = subsidy_quota.is_active
+
+        quota_liters = float(Decimal(subsidy_quota.quota_liters)) if subsidy_quota else 0.0
+        used_liters = float(Decimal(subsidy_quota.used_liters)) if subsidy_quota else 0.0
+        remaining_quota = max(0.0, quota_liters - used_liters)
+
+        # 6. Compute account status using existing helper
+        account_status = self._compute_account_status(
+            is_blocked=is_buyer_blocked,
+            is_frozen=is_buyer_frozen,
+            is_quota_active=is_quota_active,
+            remaining_liters=remaining_quota,
+        )
+
+        market_price = float(Decimal(fuel_type.price_per_liter))
+        subsidized_price = float(Decimal(fuel_type.subsidy_price_per_liter)) if fuel_type.subsidy_price_per_liter is not None else None
+
+        # Buyer can use subsidy pricing only if active, is subsidized fuel, and remaining quota exists
+        can_use_subsidy = (
+            fuel_type.subsidy_type == SubsidyType.SUBSIDIZED
+            and account_status == "ACTIVE"
+            and subsidized_price is not None
+            and remaining_quota > 0
+        )
+
+        # 7. Perform liters/amount pricing calculation
+        if calc_type == "LITERS":
+            liters = nominal
+            if can_use_subsidy:
+                subsidized_liters = min(liters, remaining_quota)
+                non_subsidized_liters = max(0.0, liters - subsidized_liters)
+                total_amount = (subsidized_liters * subsidized_price) + (non_subsidized_liters * market_price)
+            else:
+                subsidized_liters = 0.0
+                non_subsidized_liters = liters
+                total_amount = liters * market_price
+        else:  # calc_type == "AMOUNT"
+            total_amount = nominal
+            if can_use_subsidy:
+                subsidy_ceiling_amount = remaining_quota * subsidized_price
+                subsidized_amount = min(float(total_amount), subsidy_ceiling_amount)
+                remaining_amount = max(0.0, float(total_amount) - subsidized_amount)
+
+                subsidized_liters = subsidized_amount / subsidized_price
+                non_subsidized_liters = remaining_amount / market_price
+                liters = subsidized_liters + non_subsidized_liters
+            else:
+                subsidized_liters = 0.0
+                non_subsidized_liters = float(total_amount) / market_price
+                liters = non_subsidized_liters
+
+        return {
+            "account_status": account_status,
+            "price_per_liter_market": market_price,
+            "price_per_liter_subsidy": subsidized_price,
+            "subsidized_liters": subsidized_liters,
+            "non_subsidized_liters": non_subsidized_liters,
+            "total_liters": liters,
+            "total_amount": int(round(total_amount)),
+        }
+
+    async def submit_company_vehicle(
+        self,
+        company_id: UUID,
+        current_user: User,
+        plate: str,
+        vehicle_nfc_id: str | None,
+        stnk_photo: UploadFile,
+        vehicle_photo: UploadFile,
+    ) -> VehicleOwnershipRequest:
+        from app.modules.registries.models import VehicleRegistryMockup, VehicleClass
+        from sqlalchemy import select, func
+        import hashlib
+
+        plate_clean = plate.strip().upper()
+
+        # 1. Lookup plate number in VehicleRegistryMockup
+        registry_stmt = select(VehicleRegistryMockup).filter(
+            func.upper(VehicleRegistryMockup.plate_number) == plate_clean
+        )
+        registry_vehicle = (await self.db.execute(registry_stmt)).scalars().first()
+        if not registry_vehicle:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Plat nomor tidak ditemukan di database Kepolisian (Registry Mockup)",
+            )
+
+        # 2. Check if already registered in VehicleOwnership
+        existing_stmt = select(VehicleOwnership).filter(
+            VehicleOwnership.vehicle_id == registry_vehicle.id
+        )
+        existing = (await self.db.execute(existing_stmt)).scalars().first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kendaraan dengan plat nomor ini sudah terdaftar",
+            )
+
+        # Check if there is an active/pending request
+        existing_req_stmt = select(VehicleOwnershipRequest).filter(
+            VehicleOwnershipRequest.vehicle_id == registry_vehicle.id,
+            VehicleOwnershipRequest.status == VehicleOwnershipRequestStatus.PENDING
+        )
+        existing_req = (await self.db.execute(existing_req_stmt)).scalars().first()
+        if existing_req:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kendaraan dengan plat nomor ini sedang dalam proses verifikasi",
+            )
+
+        # Determine usage type based on registry
+        usage_type = VehicleUsageType.COMMERCIAL_CAR
+        if registry_vehicle.jenis == VehicleClass.TRUCK:
+            usage_type = VehicleUsageType.COMMERCIAL_TRUCK
+        elif registry_vehicle.jenis == VehicleClass.MOTORCYCLE:
+            usage_type = VehicleUsageType.COMMERCIAL_MOTORCYCLE
+
+        # Validate and save vehicle_nfc_id if provided
+        if vehicle_nfc_id:
+            await self.validate_cross_nfc_uniqueness(vehicle_nfc_id)
+
+        # Validate file uploads
+        await self._validate_image_upload(stnk_photo, label="STNK photo")
+        await self._validate_image_upload(vehicle_photo, label="vehicle photo")
+
+        request = VehicleOwnershipRequest(
+            company_id=company_id,
+            vehicle_id=registry_vehicle.id,
+            ownership_status=VehicleOwnershipStatus.COMPANY,
+            usage_type=usage_type,
+            quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
+            plate_number_snapshot=registry_vehicle.plate_number,
+            ktp_nfc_id_snapshot=f"COMPANY-{str(company_id)[:8]}",
+            vehicle_nfc_id=vehicle_nfc_id,
+            status=VehicleOwnershipRequestStatus.PENDING,
+        )
+
+        uploaded_keys: list[str] = []
+        try:
+            await self.repo.create_vehicle_ownership_request(request)
+            documents = [
+                await self._build_request_document(
+                    request_id=request.id,
+                    upload=stnk_photo,
+                    document_type=VehicleOwnershipDocumentType.STNK_PHOTO,
+                    uploaded_keys=uploaded_keys,
+                ),
+                await self._build_request_document(
+                    request_id=request.id,
+                    upload=vehicle_photo,
+                    document_type=VehicleOwnershipDocumentType.VEHICLE_PHOTO,
+                    uploaded_keys=uploaded_keys,
+                ),
+            ]
+            await self.repo.add_request_documents(documents)
+            await self.repo.commit()
+        except HTTPException:
+            await self.repo.rollback()
+            self._cleanup_uploaded_keys(uploaded_keys)
+            raise
+        except Exception:
+            await self.repo.rollback()
+            self._cleanup_uploaded_keys(uploaded_keys)
+            raise
+
+        saved_request = await self.repo.get_vehicle_ownership_request_by_id(str(request.id))
+        if not saved_request:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Vehicle ownership request was created but could not be reloaded.",
+            )
+        return saved_request

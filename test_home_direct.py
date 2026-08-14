@@ -9,7 +9,7 @@ from sqlalchemy.future import select
 async def main():
     async with AsyncSessionLocal() as session:
         # Get buyer
-        result = await session.execute(select(User).filter(User.email == "buyer@mysuf.com"))
+        result = await session.execute(select(User).filter(User.email == "buyer@sidia.com"))
         user = result.scalars().first()
         if not user:
             print("Buyer not found")

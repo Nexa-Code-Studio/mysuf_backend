@@ -33,30 +33,30 @@ logger = logging.getLogger(__name__)
 
 async def seed_demo_history() -> None:
     logger.info("==================================================")
-    logger.info("STARTING DEMO HISTORY SEEDING FOR EKYA & SO...")
+    logger.info("STARTING DEMO HISTORY SEEDING FOR BUDI & SO...")
     logger.info("==================================================")
 
     async with AsyncSessionLocal() as session:
         # 1. Fetch Sales Officer (Cashier)
         res_so = await session.execute(
-            select(User).filter(User.email == "so@mysuf.id")
+            select(User).filter(User.email == "so@sidia.id")
         )
         sales_officer = res_so.scalars().first()
         if not sales_officer:
-            logger.error("Sales Officer 'so@mysuf.id' not found! Make sure to run reset.sh first.")
+            logger.error("Sales Officer 'so@sidia.id' not found! Make sure to run reset.sh first.")
             return
 
         if not sales_officer.gas_station_id:
-            logger.error("Sales Officer 'so@mysuf.id' is not associated with any gas station.")
+            logger.error("Sales Officer 'so@sidia.id' is not associated with any gas station.")
             return
 
-        # 2. Fetch Buyer (Ekya)
+        # 2. Fetch Buyer (Budi)
         res_buyer = await session.execute(
-            select(User).filter(User.email == "ekya@mysuf.com")
+            select(User).filter(User.email == "budi.pratama@sidia.com")
         )
         buyer_user = res_buyer.scalars().first()
         if not buyer_user:
-            logger.error("Buyer 'ekya@mysuf.com' not found!")
+            logger.error("Buyer 'budi.pratama@sidia.com' not found!")
             return
 
         res_profile = await session.execute(
@@ -64,7 +64,7 @@ async def seed_demo_history() -> None:
         )
         buyer_profile = res_profile.scalars().first()
         if not buyer_profile:
-            logger.error("BuyerProfile not found for 'ekya@mysuf.com'!")
+            logger.error("BuyerProfile not found for 'budi.pratama@sidia.com'!")
             return
 
         # 3. Fetch Wallet
@@ -99,7 +99,7 @@ async def seed_demo_history() -> None:
             delete(WalletTransaction).where(WalletTransaction.wallet_id == wallet.id)
         )
         await session.commit()
-        logger.info("Cleaned up existing transactions for 'ekya@mysuf.com' successfully.")
+        logger.info("Cleaned up existing transactions for 'budi.pratama@sidia.com' successfully.")
 
         # 6. Define transaction sequence (oldest first)
         now = datetime.utcnow()
@@ -324,7 +324,7 @@ async def seed_demo_history() -> None:
 
         # 7. Update Wallet Balance to the final calculated balance
         wallet.balance = balance
-        logger.info(f"Updated Wallet balance of 'ekya@mysuf.com' to {balance}")
+        logger.info(f"Updated Wallet balance of 'budi.pratama@sidia.com' to {balance}")
 
         # 8. Update Quota used liters for current month (August 2026)
         # Seeded subsidized transactions in August 2026:

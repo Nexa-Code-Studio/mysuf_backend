@@ -12,15 +12,15 @@ async def main():
         )
         ekya_gmail_profile = res.scalars().first()
 
-        # 2. Get ekya@mysuf.com profile
+        # 2. Get ekya@subsidia.com profile
         res_seed = await session.execute(
-            select(BuyerProfile).join(User).filter(User.email == "ekya@mysuf.com")
+            select(BuyerProfile).join(User).filter(User.email == "ekya@subsidia.com")
         )
         ekya_seed_profile = res_seed.scalars().first()
 
         if ekya_gmail_profile and ekya_seed_profile:
             print("Found both profiles. Merging...")
-            # 2a. Re-assign ekya@mysuf.com's vehicle ownerships to ekyamuhammad@gmail.com
+            # 2a. Re-assign ekya@subsidia.com's vehicle ownerships to ekyamuhammad@gmail.com
             res_vehs = await session.execute(
                 select(VehicleOwnership).filter(VehicleOwnership.owner_id == ekya_seed_profile.id)
             )
@@ -41,7 +41,7 @@ async def main():
             # 2c. Update ekyamuhammad@gmail.com profile's NFC ID to "04290CEA936C80"
             ekya_gmail_profile.ktp_nfc_id_snapshot = "04290CEA936C80"
 
-            # 2d. Delete duplicate ekya@mysuf.com buyer profile to avoid future database conflicts
+            # 2d. Delete duplicate ekya@subsidia.com buyer profile to avoid future database conflicts
             await session.delete(ekya_seed_profile)
             
             await session.commit()
