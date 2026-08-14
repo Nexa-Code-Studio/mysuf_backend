@@ -1414,27 +1414,11 @@ class TransactionService:
                 year = now.year
 
                 if vehicle_ownership is None or vehicle_ownership.usage_type == VehicleUsageType.PERSONAL:
-                    policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(VehicleUsageType.PERSONAL)
-                    if policy:
-                        latest_eligibility = await subsidy_service.repo.get_latest_kk_subsidy_eligibility(
-                            kk_id=buyer_profile.kk_id,
-                            subsidy_policy_id=policy.id,
-                        )
-                        if latest_eligibility and latest_eligibility.eligibility_status == EligibilityStatus.ELIGIBLE:
-                            kk_eligibility_id = latest_eligibility.id
-                            if vehicle_ownership is None:
-                                subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
-                                    buyer_profile=buyer_profile,
-                                    month=month,
-                                    year=year,
-                                )
-                            else:
-                                subsidy_quota = await subsidy_service.get_or_create_subsidy_quota(
-                                    vehicle_ownership=vehicle_ownership,
-                                    month=month,
-                                    year=year,
-                                    kk_subsidy_eligibility_id=kk_eligibility_id,
-                                )
+                    subsidy_quota = await subsidy_service.get_or_sync_personal_quota(
+                        buyer_profile=buyer_profile,
+                        month=month,
+                        year=year,
+                    )
                 else:
                     policy = await subsidy_service.repo.get_subsidy_policy_by_usage_type(vehicle_ownership.usage_type)
                     if policy:
@@ -1456,7 +1440,8 @@ class TransactionService:
                 subsidized_price_per_liter = pricing["subsidized_price_per_liter"]
 
                 if subsidized_liters > 0 and subsidy_quota is not None:
-                    subsidy_quota.used_liters += subsidized_liters
+                    subsidy_quota.used_liters = Decimal(str(subsidy_quota.used_liters)) + Decimal(str(subsidized_liters))
+                    self.db.add(subsidy_quota)
 
         if require_wallet_payment and wallet.balance < total_amount:
             raise HTTPException(
@@ -2344,7 +2329,7 @@ class TransactionService:
                 buyer_name = log.buyer_profile.user.name
 
             fraud_alerts.append({
-                "time": log.created_at.strftime("%H:%M") if log.created_at else "--:--",
+                "time": (log.created_at + timedelta(hours=7)).strftime("%H:%M") if log.created_at else "--:--",
                 "buyer_name": buyer_name,
                 "account": f"NIK {log.nik_snapshot[:4]}..." if log.nik_snapshot else "NIK -",
                 "buyer_foto_ktp_url": buyer_foto_ktp_url,
@@ -2565,8 +2550,8 @@ class TransactionService:
                 "fuel": fuel_name,
                 "volume": float(tx.liters),
                 "price": float(tx.total_amount),
-                "time": tx.created_at.strftime("%H:%M:%S") if tx.created_at else "--:--:--",
-                "date": tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-----",
+                "time": (tx.created_at + timedelta(hours=7)).strftime("%H:%M:%S") if tx.created_at else "--:--:--",
+                "date": (tx.created_at + timedelta(hours=7)).strftime("%Y-%m-%d") if tx.created_at else "-----",
                 "status": status_label,
                 "cashier": cashier_name
             })
