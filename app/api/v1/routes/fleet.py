@@ -350,15 +350,34 @@ async def delete_fleet_vehicle(
         VehicleOwnership.owner_id == current_user.company_id,
     )
     ownership = (await db.execute(stmt)).scalars().first()
-    if not ownership:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Kendaraan tidak ditemukan atau bukan milik perusahaan Anda",
+    if ownership:
+        from app.modules.vehicles.models import VehicleOwnershipRequest
+        rel_reqs_stmt = select(VehicleOwnershipRequest).filter(
+            VehicleOwnershipRequest.approved_vehicle_ownership_id == ownership.id
         )
+        rel_reqs = (await db.execute(rel_reqs_stmt)).scalars().all()
+        for r in rel_reqs:
+            r.approved_vehicle_ownership_id = None
 
-    await db.delete(ownership)
-    await db.commit()
-    return None
+        await db.delete(ownership)
+        await db.commit()
+        return None
+
+    from app.modules.vehicles.models import VehicleOwnershipRequest
+    req_stmt = select(VehicleOwnershipRequest).filter(
+        VehicleOwnershipRequest.id == ownership_id,
+        VehicleOwnershipRequest.company_id == current_user.company_id,
+    )
+    request_obj = (await db.execute(req_stmt)).scalars().first()
+    if request_obj:
+        await db.delete(request_obj)
+        await db.commit()
+        return None
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Kendaraan tidak ditemukan atau bukan milik perusahaan Anda",
+    )
 
 
 @router.get("/vehicles/{plate}/transactions", response_model=FleetVehicleTransactionListResponse)
