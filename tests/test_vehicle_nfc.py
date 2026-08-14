@@ -22,6 +22,15 @@ def _build_company_admin_token(user_id: str) -> str:
         allowed_apps=["PORTAL_WEB"],
     )
 
+def _build_super_admin_token(user_id: str) -> str:
+    return create_access_token(
+        subject=user_id,
+        session_id=str(uuid4()),
+        client_type="PORTAL_WEB",
+        roles=[UserRole.SUPER_ADMIN.value],
+        allowed_apps=["PORTAL_WEB"],
+    )
+
 def _build_cashier_token(user_id: str) -> str:
     return create_access_token(
         subject=user_id,
@@ -132,7 +141,7 @@ async def test_vehicle_nfc_flow():
         # 5. Create Sales Officer (Cashier)
         cashier = User(
             name="Cashier Officer",
-            email=f"cashier-{uuid4().hex[:6]}@mysuf.id",
+            email=f"cashier-{uuid4().hex[:6]}@sidia.id",
             password=get_password_hash("secret123"),
             role=[UserRole.SALES_OFFICER],
             is_active=True,
@@ -142,20 +151,35 @@ async def test_vehicle_nfc_flow():
         )
         db.add(cashier)
 
+        # Create Super Admin User for verification
+        super_admin = User(
+            name="Super Admin",
+            email=f"superadmin-{uuid4().hex[:6]}@sidia.id",
+            password=get_password_hash("secret123"),
+            role=[UserRole.SUPER_ADMIN],
+            is_active=True,
+            shift="Morning",
+            employee_id=f"EMP-{uuid4().hex[:6]}",
+        )
+        db.add(super_admin)
+
         await db.commit()
 
         admin_id = company_admin.id
         cashier_id = cashier.id
         driver_user_id = driver_user.id
+        super_admin_id = super_admin.id
         vehicle_registry_id = vehicle_reg_mock.id
         gas_station_id = gas_station.id
 
     # Authenticate Header Tokens
     admin_token = _build_company_admin_token(str(admin_id))
     cashier_token = _build_cashier_token(str(cashier_id))
+    super_admin_token = _build_super_admin_token(str(super_admin_id))
     
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     cashier_headers = {"Authorization": f"Bearer {cashier_token}"}
+    super_admin_headers = {"Authorization": f"Bearer {super_admin_token}"}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # ----------------------------------------------------
@@ -164,7 +188,11 @@ async def test_vehicle_nfc_flow():
         res = await ac.post(
             "/api/v1/fleet/vehicles",
             headers=admin_headers,
-            json={"plate": vehicle_plate, "vehicle_nfc_id": citizen_nfc}, # bentrok!
+            data={"plate": vehicle_plate, "vehicle_nfc_id": citizen_nfc}, # bentrok!
+            files={
+                "stnk_photo": ("stnk.jpg", b"fake-stnk-image", "image/jpeg"),
+                "vehicle_photo": ("vehicle.jpg", b"fake-vehicle-image", "image/jpeg"),
+            },
         )
         assert res.status_code == 400
         assert "sudah terdaftar" in res.json()["detail"]
@@ -175,12 +203,27 @@ async def test_vehicle_nfc_flow():
         res = await ac.post(
             "/api/v1/fleet/vehicles",
             headers=admin_headers,
-            json={"plate": vehicle_plate, "vehicle_nfc_id": vehicle_nfc},
+            data={"plate": vehicle_plate, "vehicle_nfc_id": vehicle_nfc},
+            files={
+                "stnk_photo": ("stnk.jpg", b"fake-stnk-image", "image/jpeg"),
+                "vehicle_photo": ("vehicle.jpg", b"fake-vehicle-image", "image/jpeg"),
+            },
         )
         assert res.status_code == 200
-        vehicle_data = res.json()
-        assert vehicle_data["vehicle_nfc_id"] == vehicle_nfc
-        ownership_id = vehicle_data["id"]
+        request_data = res.json()
+        assert request_data["vehicle_nfc_id"] == vehicle_nfc
+        request_id = request_data["id"]
+
+        # Approve the request via Admin endpoint
+        res = await ac.put(
+            f"/api/v1/vehicle-ownerships/admin/requests/{request_id}/verify",
+            headers=super_admin_headers,
+            json={"status": "APPROVED", "review_note": "Approved by super admin test"},
+        )
+        assert res.status_code == 200
+        verify_data = res.json()
+        ownership_id = verify_data["approved_vehicle_ownership_id"]
+        assert ownership_id is not None
 
         # ----------------------------------------------------
         # Test Case C: Assign Driver to the vehicle
@@ -223,7 +266,25 @@ async def test_vehicle_nfc_flow():
     async with AsyncSessionLocal() as db:
         from app.modules.gas_stations.models import GasStation
         from app.modules.transactions.models import CashierScanEvent
+        from app.modules.vehicles.models import VehicleOwnershipDocument, VehicleOwnershipRequest, VehicleOwnershipRequestDocument
+        from app.modules.subsidies.models import SubsidyQuota
+
+        # Delete subsidy quota
+        await db.execute(delete(SubsidyQuota).filter(SubsidyQuota.owner_id == vehicle_registry_id))
+
+        # Delete request documents
+        await db.execute(delete(VehicleOwnershipRequestDocument).filter(VehicleOwnershipRequestDocument.vehicle_ownership_request_id == request_id))
+        # Delete request
+        await db.execute(delete(VehicleOwnershipRequest).filter(VehicleOwnershipRequest.id == request_id))
+
+        # Delete ownership documents
+        await db.execute(delete(VehicleOwnershipDocument).filter(VehicleOwnershipDocument.vehicle_ownership_id == ownership_id))
+        # Delete ownership
         await db.execute(delete(VehicleOwnership).filter(VehicleOwnership.id == ownership_id))
+
+        # Delete super admin user
+        await db.execute(delete(User).filter(User.id == super_admin_id))
+
         await db.execute(delete(CashierScanEvent).filter(CashierScanEvent.cashier_user_id == cashier_id))
         await db.execute(delete(BuyerProfile).filter(BuyerProfile.user_id == driver_user_id))
         await db.execute(delete(User).filter(User.id.in_([admin_id, cashier_id, driver_user_id])))

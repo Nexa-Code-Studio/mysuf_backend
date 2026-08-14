@@ -76,6 +76,7 @@ class TransactionRepository:
                 selectinload(FuelTransaction.buyer_profile),
                 selectinload(FuelTransaction.subsidy_quota),
                 selectinload(FuelTransaction.payment_transactions),
+                selectinload(FuelTransaction.wallet_transaction),
             )
             .filter(FuelTransaction.id == tx_id)
         )

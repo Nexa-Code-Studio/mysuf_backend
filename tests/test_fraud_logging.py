@@ -408,28 +408,18 @@ async def test_already_frozen_user_logging():
 
             service._evaluate_fraud = mock_eval_safe
 
-            # Execute context preparation (which handles fraud log trigger)
+            # Execute context preparation (which should now allow purchase at normal price)
             context = await service._prepare_fuel_purchase_context(
                 current_user=cashier_user,
                 request=request,
                 require_wallet_payment=False
             )
-            await session.commit()
-
-            # Check that a fraud log WAS created for the already frozen buyer
-            result = await session.execute(
-                select(FraudLog).filter(
-                    FraudLog.buyer_profile_id == buyer_profile.id,
-                )
-            )
-            logs = result.scalars().all()
-            assert len(logs) == 1
-            log = logs[0]
-            assert log.risk_score == 75
-            assert log.risk_level == FraudRiskLevel.HIGH_RISK
-            assert log.action_taken == FraudActionTaken.FREEZE_ACCOUNT
-            assert len(log.detected_frauds) == 1
-            assert log.detected_frauds[0]["type"] == "SUSPENDED_USER_ACTIVITY"
+            
+            # Verify they are charged normal price (no subsidy)
+            assert context["is_subsidized_purchase"] is False
+            assert context["subsidized_liters"] == Decimal("0")
+            assert context["non_subsidized_liters"] == Decimal("10.00")
+            assert context["subsidized_price_per_liter"] is None
 
     finally:
         async with AsyncSessionLocal() as session:

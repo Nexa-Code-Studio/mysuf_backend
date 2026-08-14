@@ -121,7 +121,8 @@ class VehicleOwnershipRequest(Base):
     __tablename__ = "vehicle_ownership_requests"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid7)
-    buyer_profile_id = Column(UUID(as_uuid=True), ForeignKey("buyer_profiles.id"), nullable=False, index=True)
+    buyer_profile_id = Column(UUID(as_uuid=True), ForeignKey("buyer_profiles.id"), nullable=True, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
     vehicle_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     ownership_status = Column(Enum(VehicleOwnershipStatus, name="vehicle_ownership_status_enum", create_type=False), nullable=False)
     usage_type = Column(
@@ -135,6 +136,7 @@ class VehicleOwnershipRequest(Base):
     )
     plate_number_snapshot = Column(String, nullable=False)
     ktp_nfc_id_snapshot = Column(String, nullable=False)
+    vehicle_nfc_id = Column(String, nullable=True, index=True)
     status = Column(
         Enum(VehicleOwnershipRequestStatus, name="vehicle_ownership_request_status_enum"),
         nullable=False,
@@ -150,6 +152,7 @@ class VehicleOwnershipRequest(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     buyer_profile = relationship("BuyerProfile")
+    company = relationship("Company")
     reviewed_by_user = relationship("User", foreign_keys=[reviewed_by_user_id])
     approved_vehicle_ownership = relationship("VehicleOwnership", foreign_keys=[approved_vehicle_ownership_id])
     documents = relationship(

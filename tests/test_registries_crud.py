@@ -112,6 +112,17 @@ async def test_registries_crud_flow():
             assert res.json()["nik"] == citizen_nik_updated
             assert res.json()["nama"] == "Ahmad Test Updated"
 
+            # Test Citizen KTP upload & retrieval
+            files = {"file": ("ktp.jpg", b"fake image bytes", "image/jpeg")}
+            res = await ac.post(f"/api/v1/registries/citizens/{citizen_id}/upload-ktp", files=files)
+            assert res.status_code == 200
+            assert "storage_key" in res.json()
+            
+            # Get KTP photo
+            res = await ac.get(f"/api/v1/registries/citizens/{citizen_id}/foto-ktp")
+            assert res.status_code == 200
+            assert res.content == b"fake image bytes"
+
             # ----------------------------------------------------
             # 3. Vehicle CRUD Tests
             # ----------------------------------------------------

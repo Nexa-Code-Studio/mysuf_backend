@@ -61,7 +61,7 @@ def decode_qris_ktp(qr_string: str) -> str:
     """
     Decodes the secure symmetric XOR obfuscated QRIS string to retrieve the raw NIK.
     """
-    prefix = "MYSUF-QRIS:KTP:"
+    prefix = "SUBSIDIA-QRIS:KTP:"
     if not qr_string.startswith(prefix):
         raise ValueError("Invalid QRIS code format or prefix mismatch")
         

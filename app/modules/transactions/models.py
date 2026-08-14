@@ -150,7 +150,7 @@ class FuelTransaction(Base):
 
     verified_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
-    plate_number_snapshot = Column(String, nullable=False)
+    plate_number_snapshot = Column(String, nullable=True)
     nik_snapshot = Column(String, nullable=True)
     company_name_snapshot = Column(String, nullable=True)
     vehicle_nfc_id_snapshot = Column(String, nullable=True)
@@ -241,7 +241,7 @@ class FraudLog(Base):
     vehicle_ownership_id = Column(UUID(as_uuid=True), ForeignKey("vehicle_ownerships.id"), nullable=True)
     
     # Snapshots (Integritas Data Historis)
-    plate_number_snapshot = Column(String(50), nullable=False)
+    plate_number_snapshot = Column(String(50), nullable=True)
     nik_snapshot = Column(String(50), nullable=True)
     
     # AI Engine Results

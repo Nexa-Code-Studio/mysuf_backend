@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed all MySuf backend master data.")
+    parser = argparse.ArgumentParser(description="Seed all SUBSIDIA backend master data.")
     parser.add_argument("--month", type=int, help="Quota month to seed (1-12). Defaults to current month.")
     parser.add_argument("--year", type=int, help="Quota year to seed. Defaults to current year.")
     args = parser.parse_args()
@@ -119,9 +119,14 @@ async def main(month: int | None = None, year: int | None = None) -> None:
             quota_summary["year"],
         )
 
+    # 9. Demo Transaction History
+    logger.info("9/9 Seeding Demo Transaction History...")
+    from scripts.seed_demo_history import seed_demo_history
+    await seed_demo_history()
+
     logger.info("==================================================")
     logger.info("MASTER DATA SEEDING COMPLETED SUCCESSFULLY!")
-    logger.info("All seeded accounts use default password: Password123")
+    logger.info("All seeded accounts use default password: Password123 / subsidia123")
     logger.info("==================================================")
 
 if __name__ == "__main__":

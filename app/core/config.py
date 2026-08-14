@@ -3,7 +3,7 @@ from pydantic import AnyHttpUrl, EmailStr, validator
 from typing import List, Union
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "MySuf Backend"
+    PROJECT_NAME: str = "SUBSIDIA Backend"
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     MINIO_ENDPOINT: str
     MINIO_ACCESS_KEY: str
     MINIO_SECRET_KEY: str
-    MINIO_BUCKET_NAME: str = "mysuf"
+    MINIO_BUCKET_NAME: str = "subsidia"
     MINIO_SECURE: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")

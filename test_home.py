@@ -3,7 +3,7 @@ import requests
 def test_dashboard():
     login_url = "http://localhost:8080/api/v1/auth/login"
     login_data = {
-        "email": "buyer@mysuf.com",
+        "email": "buyer@sidia.com",
         "password": "Password123",
         "client_type": "BUYER_ANDROID"
     }

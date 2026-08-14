@@ -36,4 +36,4 @@ api_router.include_router(fraud_logs_routes.router, prefix="/fraud-logs", tags=[
 api_router.include_router(spbu_routes.router, prefix="/spbu", tags=["spbu"])
 api_router.include_router(government_routes.router, prefix="/government", tags=["government"])
 api_router.include_router(fleet_routes.router, prefix="/fleet", tags=["fleet"])
-api_router.include_router(system_activities_routes.router, prefix="/mysuf-admin", tags=["mysuf-admin"])
+api_router.include_router(system_activities_routes.router, prefix="/subsidia-admin", tags=["subsidia-admin"])

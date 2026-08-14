@@ -27,7 +27,7 @@ async def create_buyer_registration_attempt(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    Submit a new buyer registration attempt for mysuf_warga.
+    Submit a new buyer registration attempt for subsidia_warga.
     The final User and BuyerProfile are created only after verification passes.
     """
     service = BuyerRegistrationService(db)

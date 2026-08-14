@@ -89,11 +89,11 @@ async def test_system_activities_api():
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # Test 1: Fetch activity logs as BUYER (should get 403 Forbidden)
-            res_buyer = await ac.get("/api/v1/mysuf-admin/audit-logs", headers=headers_buyer)
+            res_buyer = await ac.get("/api/v1/subsidia-admin/audit-logs", headers=headers_buyer)
             assert res_buyer.status_code == 403
 
             # Test 2: Fetch activity logs as SUPER_ADMIN (should automatically seed 5 mockup items)
-            res_super = await ac.get("/api/v1/mysuf-admin/audit-logs", headers=headers_super)
+            res_super = await ac.get("/api/v1/subsidia-admin/audit-logs", headers=headers_super)
             assert res_super.status_code == 200
             data = res_super.json()
             assert data["total"] >= 5
@@ -104,7 +104,7 @@ async def test_system_activities_api():
             assert any("Approve perusahaan: PT Logistik Nusantara Maju" in action for action in actions)
 
             # Test 3: Search filter
-            res_search = await ac.get("/api/v1/mysuf-admin/audit-logs?search=PT%20Logistik", headers=headers_super)
+            res_search = await ac.get("/api/v1/subsidia-admin/audit-logs?search=PT%20Logistik", headers=headers_super)
             assert res_search.status_code == 200
             data_search = res_search.json()
             assert len(data_search["items"]) == 1
@@ -123,7 +123,7 @@ async def test_system_activities_api():
             created_user_id = res_create.json()["id"]
 
             # Fetch logs again and verify trigger was logged
-            res_audit_after = await ac.get("/api/v1/mysuf-admin/audit-logs", headers=headers_super)
+            res_audit_after = await ac.get("/api/v1/subsidia-admin/audit-logs", headers=headers_super)
             assert res_audit_after.status_code == 200
             actions_after = [item["action"] for item in res_audit_after.json()["items"]]
             assert "Tambah user baru: Audit Test User" in actions_after
@@ -133,7 +133,7 @@ async def test_system_activities_api():
             assert res_delete.status_code == 204
 
             # Verify delete trigger was logged
-            res_audit_final = await ac.get("/api/v1/mysuf-admin/audit-logs", headers=headers_super)
+            res_audit_final = await ac.get("/api/v1/subsidia-admin/audit-logs", headers=headers_super)
             assert res_audit_final.status_code == 200
             actions_final = [item["action"] for item in res_audit_final.json()["items"]]
             assert "Hapus user: Audit Test User" in actions_final

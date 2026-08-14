@@ -24,13 +24,13 @@ from app.modules.transactions.models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TARGET_EMAILS = ["ekya@mysuf.com", "ekyamuhammad@gmail.com"]
-TARGET_NIK = "3511111411040003"
+TARGET_EMAILS = ["budi.pratama@sidia.com", "ekyamuhammad@gmail.com"]
+TARGET_NIK = "3511111411049999"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Reset EKYA's fraud state so the fraud demo can be replayed."
+        description="Reset BUDI's fraud state so the fraud demo can be replayed."
     )
     parser.add_argument(
         "--keep-transactions",
@@ -142,9 +142,9 @@ async def main() -> None:
 
         await session.commit()
 
-    logger.info("Reset complete — EKYA can now be used for another fraud demo run.")
+    logger.info("Reset complete — BUDI can now be used for another fraud demo run.")
 
-    logger.info("Reset complete — EKYA can now be used for another fraud demo run.")
+    logger.info("Reset complete — BUDI can now be used for another fraud demo run.")
 
 
 if __name__ == "__main__":

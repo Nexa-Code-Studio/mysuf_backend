@@ -163,7 +163,7 @@ async def test_spbu_dashboard_summary_api():
             assert stats["Total Transactions"] == "2"
             assert "25.5 L" in stats["Fuel Distributed"]
             assert stats["Rejected Transactions"] == "1"
-            assert stats["High-Risk Vehicles"] == "1"
+            assert stats["High-Risk Users"] == "1"
             
             # Check fuel types
             sub_type = next(f for f in data["fuelTypes"] if f["name"] == "Subsidi")
@@ -172,7 +172,7 @@ async def test_spbu_dashboard_summary_api():
             # Check fraud alerts
             assert len(data["fraudAlerts"]) == 1
             alert = data["fraudAlerts"][0]
-            assert alert["vehicle"] == "B 8888 XYZ"
+            assert alert["buyer_name"] == "Pengguna"
             assert alert["risk"] == "CRITICAL"
             assert alert["reason"] == "Sikat kuota subsidi liar"
             

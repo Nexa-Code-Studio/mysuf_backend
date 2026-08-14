@@ -452,7 +452,7 @@ class UserService:
         year: int,
     ) -> dict[str, float | int] | None:
         latest_eligibility = await self._get_latest_personal_eligibility(buyer_profile)
-        if latest_eligibility is None or latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
+        if latest_eligibility is not None and latest_eligibility.eligibility_status != EligibilityStatus.ELIGIBLE:
             return None
 
         quota = await self.subsidy_service.get_or_sync_personal_quota(
@@ -460,6 +460,9 @@ class UserService:
             month=month,
             year=year,
         )
+        if quota is None or not quota.is_active:
+            return None
+
         quota_liters = float(Decimal(quota.quota_liters))
         used_liters = float(Decimal(quota.used_liters))
         remaining_liters = max(quota_liters - used_liters, 0.0)
@@ -676,6 +679,7 @@ class UserService:
         
         await self.repo.update_buyer_profile(profile)
         return {"message": "PIN berhasil disimpan."}
+
 
     async def update_device_token(self, user_id: str, token: str) -> dict:
         """

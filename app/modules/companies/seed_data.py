@@ -5,11 +5,11 @@ Creates demo companies and a COMPANY_ADMIN user for each company.
 This seeder is idempotent — safe to run multiple times.
 
 Default credentials:
-  - password : mysuf123
+  - password : subsidia123
   - role     : COMPANY_ADMIN
 
 Companies seeded:
-  1. PT Pertamina Retail          → fleet.admin@mysuf.id       (existing, reused)
+  1. PT Pertamina Retail          → fleet.admin@subsidia.id       (existing, reused)
   2. PT Logistik Nusantara        → admin@logistiknusantara.id
   3. CV Angkutan Maju Bersama     → admin@angkutanmaju.id
   4. PT Transportasi Prima        → admin@transprimaind.id
@@ -21,6 +21,8 @@ from sqlalchemy.future import select
 from app.modules.companies.models import Company
 from app.modules.users.models import User, UserRole
 from app.core.security import get_password_hash
+from app.modules.registries.models import VehicleRegistryMockup, VehicleClass
+from app.modules.vehicles.models import VehicleOwnership, VehicleOwnerType, VehicleOwnershipStatus, VehicleQuotaMode, VehicleUsageType
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -42,7 +44,7 @@ COMPANY_ADMIN_DATA = [
         },
         "admin": {
             "name": "Fleet Admin",
-            "email": "fleet.admin@mysuf.id",
+            "email": "fleet.admin@sidia.id",
             "employee_id": "EMP-AC-001",
         },
     },
@@ -123,7 +125,7 @@ async def seed_company_admins(session: AsyncSession) -> dict[str, int]:
         "admins_existing": 0,
     }
 
-    default_password_hash = get_password_hash("mysuf123")
+    default_password_hash = get_password_hash("subsidia123")
 
     for entry in COMPANY_ADMIN_DATA:
         company_data = entry["company"]
@@ -190,6 +192,50 @@ async def seed_company_admins(session: AsyncSession) -> dict[str, int]:
             if not existing_user.is_active:
                 existing_user.is_active = True
             summary["admins_existing"] += 1
+
+        # ── 3. Seed Corporate Vehicles for this Company ──────────────────────
+        result_veh = await session.execute(
+            select(VehicleRegistryMockup).filter(VehicleRegistryMockup.owner_name == company.name)
+        )
+        registry_vehicles = result_veh.scalars().all()
+        for reg_veh in registry_vehicles:
+            result_own = await session.execute(
+                select(VehicleOwnership).filter(
+                    VehicleOwnership.owner_type == VehicleOwnerType.COMPANY,
+                    VehicleOwnership.owner_id == company.id,
+                    VehicleOwnership.vehicle_id == reg_veh.id
+                )
+            )
+            ownership = result_own.scalars().first()
+
+            # Determine usage type based on registry vehicle class
+            if reg_veh.jenis == VehicleClass.TRUCK:
+                usage_type = VehicleUsageType.COMMERCIAL_TRUCK
+            elif reg_veh.jenis == VehicleClass.CAR:
+                usage_type = VehicleUsageType.COMMERCIAL_CAR
+            elif reg_veh.jenis == VehicleClass.MOTORCYCLE:
+                usage_type = VehicleUsageType.COMMERCIAL_MOTORCYCLE
+            else:
+                usage_type = VehicleUsageType.COMMERCIAL_TRUCK
+
+            if ownership is None:
+                ownership = VehicleOwnership(
+                    owner_type=VehicleOwnerType.COMPANY,
+                    owner_id=company.id,
+                    vehicle_id=reg_veh.id,
+                    ownership_status=VehicleOwnershipStatus.COMPANY,
+                    usage_type=usage_type,
+                    quota_mode=VehicleQuotaMode.DEDICATED_VEHICLE_QUOTA,
+                    plate_number_snapshot=reg_veh.plate_number,
+                    ktp_nfc_id_snapshot=f"COMPANY-{str(company.id)[:8]}",
+                    vehicle_nfc_id=reg_veh.vehicle_nfc_id,
+                )
+                session.add(ownership)
+            else:
+                ownership.plate_number_snapshot = reg_veh.plate_number
+                ownership.vehicle_nfc_id = reg_veh.vehicle_nfc_id
+                ownership.usage_type = usage_type
+                ownership.ktp_nfc_id_snapshot = f"COMPANY-{str(company.id)[:8]}"
 
     await session.commit()
     return summary

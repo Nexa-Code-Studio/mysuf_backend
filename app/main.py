@@ -6,9 +6,13 @@ from fastapi.routing import APIRoute
 from app.core.config import settings
 from app.api.v1.router import api_router
 
+from app.modules.buyer_registrations.model_store import initialize_model_store, close_model_store
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await initialize_model_store()
     yield
+    await close_model_store()
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -30,7 +34,7 @@ app.add_middleware(
         "http://localhost:3000", 
         "https://api.smkn1wringin.sch.id", 
         "https://api.smkn1wringin.sch.id:3000",
-        "https://mysuf-web.vercel.app"
+        "https://subsidia-web.vercel.app"
     ],
     allow_origin_regex="https://.*\\.vercel\\.app",
     allow_credentials=True,

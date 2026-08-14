@@ -114,7 +114,11 @@ async def seed_subsidy_settings(session: AsyncSession) -> None:
             occupation_bonuses={"OJOL": 50.0, "NELAYAN": 100.0, "UMKM": 50.0}
         )
         session.add(setting)
-        await session.commit()
+    else:
+        setting.income_threshold = Decimal("5000000.00")
+        setting.default_quota_liters = Decimal("100.00")
+        setting.occupation_bonuses = {"OJOL": 50.0, "NELAYAN": 100.0, "UMKM": 50.0}
+    await session.commit()
 
 
 async def seed_subsidy_quotas(

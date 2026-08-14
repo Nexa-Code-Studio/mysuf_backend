@@ -110,10 +110,14 @@ class CashierBuyerByNfcBuyerResponse(BaseModel):
     verification_status: str
     risk_score: float
     is_pin_active: bool = False
+    is_blocked: bool = False
+    is_frozen: bool = False
+    frozen_until: Optional[str] = None
     quota_liters: float | None = None
     used_liters: float | None = None
     remaining_liters: float | None = None
     is_eligible: bool | None = None
+    account_status: Optional[str] = None
 
 
 class CashierBuyerByNfcVehicleResponse(BaseModel):
@@ -246,15 +250,19 @@ class BuyerFamilyOverviewResponse(BaseModel):
 
 class AdminVehicleRequestResponse(BaseModel):
     id: UUID
-    buyer_profile_id: UUID
-    buyer_name: str
-    buyer_nik: str
+    buyer_profile_id: Optional[UUID] = None
+    buyer_name: Optional[str] = ""
+    buyer_nik: Optional[str] = ""
+    company_id: Optional[UUID] = None
+    company_name: Optional[str] = None
+    company_nib: Optional[str] = None
     vehicle_id: UUID
     ownership_status: VehicleOwnershipStatus
     usage_type: VehicleUsageType
     quota_mode: VehicleQuotaMode
     plate_number_snapshot: str
     ktp_nfc_id_snapshot: str
+    vehicle_nfc_id: Optional[str] = None
     status: VehicleOwnershipRequestStatus
     review_note: str | None = None
     submitted_at: datetime
@@ -267,3 +275,21 @@ class AdminVehicleRequestResponse(BaseModel):
 class VehicleOwnershipRequestVerify(BaseModel):
     status: str  # "APPROVED" or "REJECTED"
     review_note: Optional[str] = None
+
+
+class CashierPricingRequest(BaseModel):
+    nik: str
+    fuel_type_id: UUID
+    calc_type: str  # "LITERS" or "AMOUNT"
+    nominal: float
+    plate_number: Optional[str] = None
+
+
+class CashierPricingResponse(BaseModel):
+    account_status: str
+    price_per_liter_market: float
+    price_per_liter_subsidy: float | None = None
+    subsidized_liters: float
+    non_subsidized_liters: float
+    total_liters: float
+    total_amount: int

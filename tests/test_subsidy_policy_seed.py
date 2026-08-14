@@ -6,6 +6,7 @@ from sqlalchemy import delete, func, select
 from app.core.database import AsyncSessionLocal
 from app.modules.subsidies.models import KKSubsidyEligibility, SubsidyPolicy, SubsidyQuota
 from app.modules.subsidies.seed_data import seed_subsidy_policies
+from app.modules.transactions.models import FuelTransaction
 from app.modules.vehicles.models import VehicleUsageType
 
 
@@ -53,6 +54,20 @@ async def test_seed_subsidy_policies_is_idempotent_and_keeps_one_matching_policy
                 )
             ).scalars().all()
             if policy_ids:
+                # Remove fuel_transactions referencing kk_subsidy_eligibilities (FK chain)
+                elig_ids = (
+                    await session.execute(
+                        select(KKSubsidyEligibility.id).where(
+                            KKSubsidyEligibility.subsidy_policy_id.in_(policy_ids)
+                        )
+                    )
+                ).scalars().all()
+                if elig_ids:
+                    await session.execute(
+                        delete(FuelTransaction).where(
+                            FuelTransaction.kk_subsidy_eligibility_id.in_(elig_ids)
+                        )
+                    )
                 await session.execute(
                     delete(SubsidyQuota).where(SubsidyQuota.subsidy_policy_id.in_(policy_ids))
                 )
@@ -91,6 +106,20 @@ async def test_seed_subsidy_policies_is_idempotent_and_keeps_one_matching_policy
                 )
             ).scalars().all()
             if policy_ids:
+                # Remove fuel_transactions referencing kk_subsidy_eligibilities (FK chain)
+                elig_ids = (
+                    await session.execute(
+                        select(KKSubsidyEligibility.id).where(
+                            KKSubsidyEligibility.subsidy_policy_id.in_(policy_ids)
+                        )
+                    )
+                ).scalars().all()
+                if elig_ids:
+                    await session.execute(
+                        delete(FuelTransaction).where(
+                            FuelTransaction.kk_subsidy_eligibility_id.in_(elig_ids)
+                        )
+                    )
                 await session.execute(
                     delete(SubsidyQuota).where(SubsidyQuota.subsidy_policy_id.in_(policy_ids))
                 )

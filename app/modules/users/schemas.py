@@ -82,10 +82,14 @@ class UserProfileResponse(BaseModel):
     quotaRemaining: int
     walletBalance: int
     isPinActive: bool = False
+    pekerjaan: str = "LAINNYA"
+    penghasilan: float = 0.0
 
 class UserPinUpdate(BaseModel):
     pin: str
     old_pin: Optional[str] = None
+
+
 
 
 class HomeVehicleVerificationResponse(BaseModel):

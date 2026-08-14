@@ -136,6 +136,21 @@ async def test_get_buyer_quota_detail_api():
                 policy.monthly_quota_liters = Decimal("200.00")
                 await session.flush()
 
+            from app.modules.subsidies.models import SubsidySetting
+            setting_result = await session.execute(select(SubsidySetting))
+            setting = setting_result.scalars().first()
+            if not setting:
+                setting = SubsidySetting(
+                    income_threshold=Decimal("5000000.00"),
+                    default_quota_liters=Decimal("280.00"),
+                    occupation_bonuses={"OJOL": 120.0, "NELAYAN": 260.0, "UMKM": 550.0}
+                )
+                session.add(setting)
+            else:
+                setting.default_quota_liters = Decimal("280.00")
+                setting.occupation_bonuses = {"OJOL": 120.0, "NELAYAN": 260.0, "UMKM": 550.0}
+            await session.flush()
+
             session.add_all([
                 kk, user, buyer_profile, gas_station,
                 subsidized_fuel, unsubsidized_fuel, my_registry_vehicle

@@ -42,7 +42,7 @@ async def test_verification_service_completes_attempt(monkeypatch):
     kk_id = uuid4()
     citizen_id = uuid4()
     attempt_id = None
-    citizen_nik = f"320101{uuid4().hex[:10]}"
+    citizen_nik = f"320101{str(uuid4().int)[-10:]}"
     citizen_nfc = f"VERIFY-NFC-{uuid4().hex[:12]}"
 
     monkeypatch.setattr(
@@ -76,7 +76,7 @@ async def test_verification_service_completes_attempt(monkeypatch):
             nik_input=citizen.nik,
             email=f"verify_success_{uuid4()}@example.com",
             password_hash="hashed-password",
-            ocr_raw_text=citizen.nama,
+            ocr_raw_text=f"NIK {citizen_nik}\nNama {citizen.nama}",
             status=BuyerRegistrationStatus.PENDING,
         )
         attempt_id = attempt.id
@@ -167,7 +167,7 @@ async def test_verification_service_fails_on_nik_mismatch(monkeypatch):
     kk_id = uuid4()
     citizen_id = uuid4()
     attempt_id = None
-    citizen_nik = f"320101{uuid4().hex[:10]}"
+    citizen_nik = f"320101{str(uuid4().int)[-10:]}"
     citizen_nfc = f"VERIFY-NFC-{uuid4().hex[:12]}"
 
     monkeypatch.setattr(
@@ -197,7 +197,7 @@ async def test_verification_service_fails_on_nik_mismatch(monkeypatch):
             nik_input=citizen.nik,
             email=f"verify_fail_{uuid4()}@example.com",
             password_hash="hashed-password",
-            ocr_raw_text=citizen.nama,
+            ocr_raw_text=f"NIK 3201010101019999\nNama {citizen.nama}",
             status=BuyerRegistrationStatus.PENDING,
         )
         attempt_id = attempt.id

@@ -52,9 +52,31 @@ class VerificationService:
 
         try:
             await self._verify_attempt(attempt)
+            print("\n" + "=" * 60)
+            print(f" [BACKEND LOG] VERIFIKASI SELESAI & SUKSES (Attempt: {attempt.id})")
+            print("=" * 60)
+            print(f"NIK Inputan Warga : {attempt.nik_input}")
+            print(f"Nama Registri DB  : {attempt.registry_name_snapshot}")
+            print("=" * 60 + "\n")
         except VerificationFailure as failure:
+            print("\n" + "=" * 60)
+            print(f" [BACKEND LOG] VERIFIKASI GAGAL (Attempt: {attempt.id})")
+            print("=" * 60)
+            print(f"NIK Inputan Warga : {attempt.nik_input}")
+            print(f"NIK Hasil OCR BE  : {attempt.nik_ocr}")
+            print(f"Alasan Kegagalan  : {failure.reason}")
+            print(f"Detail Kegagalan  : {failure.detail}")
+            print(f"\nTeks Mentah OCR KTP BE:\n{attempt.ocr_raw_text}")
+            print("=" * 60 + "\n")
             await self._mark_failed(attempt, failure.reason, failure.detail)
         except Exception as exc:
+            import traceback
+            print("\n" + "=" * 60)
+            print(f" [BACKEND LOG] VERIFIKASI ERROR SYSTEM (Attempt: {attempt.id})")
+            print("=" * 60)
+            print(f"Error Message     : {str(exc)}")
+            traceback.print_exc()
+            print("=" * 60 + "\n")
             await self._mark_failed(attempt, "VERIFICATION_INTERNAL_ERROR", str(exc))
 
     async def _verify_attempt(self, attempt: BuyerRegistrationAttempt) -> None:
@@ -91,9 +113,13 @@ class VerificationService:
 
         ktp_rectified = await asyncio.to_thread(ImageUtils.perspective_correct_ktp, ktp_image)
         
-        ocr_result = await asyncio.to_thread(self.ocr_service.extract_nik, ktp_rectified)
-        attempt.nik_ocr = ocr_result.nik
-        attempt.is_nik_match = (ocr_result.nik == attempt.nik_input)
+        # Skip backend PaddleOCR and directly use the frontend-supplied OCR text
+        if not attempt.ocr_raw_text:
+            raise VerificationFailure("NIK_OCR_NOT_FOUND", "Teks OCR tidak terdeteksi dari frontend.")
+
+        ocr_nik = self.ocr_service.extract_nik_from_text(attempt.ocr_raw_text)
+        attempt.nik_ocr = ocr_nik
+        attempt.is_nik_match = (ocr_nik == attempt.nik_input)
 
         if not attempt.is_nik_match:
             raise VerificationFailure("NIK_OCR_MISMATCH", "NIK on KTP does not match the inputted NIK.")

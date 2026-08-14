@@ -59,7 +59,7 @@ async def test_spbu_activity_logs_api():
                 (SpbuActivityCategory.Penjualan, "Audit stok tangki solar bawah tanah selesai. Kapasitas: 85%.", 50),
                 (SpbuActivityCategory.Keamanan, "Tindakan cepat diambil terhadap Plat B 9123 KZ. Kasus diselesaikan.", 75),
                 (SpbuActivityCategory.Penjualan, "Penjualan Solar Subsidi mencapai batas kuota harian wilayah (Nozzle 03).", 165),
-                (SpbuActivityCategory.Sistem, "Sistem MySuF sinkronisasi data dengan server BPH Migas berhasil.", 240)
+                (SpbuActivityCategory.Sistem, "Sistem SUBSIDIA sinkronisasi data dengan server BPH Migas berhasil.", 240)
             ]
             now = datetime.utcnow()
             for cat, detail, minutes_ago in mock_data:
@@ -83,7 +83,7 @@ async def test_spbu_activity_logs_api():
 
             # Verify that one of the seeded logs exists
             details = [item["detail"] for item in data["items"]]
-            assert "Sistem MySuF sinkronisasi data dengan server BPH Migas berhasil." in details
+            assert "Sistem SUBSIDIA sinkronisasi data dengan server BPH Migas berhasil." in details
 
             # Test 2: Filter by category = Keamanan (should return 2 items)
             res_keamanan = await ac.get("/api/v1/spbu/activity?category=Keamanan", headers=headers_spbu)
